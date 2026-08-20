@@ -1,0 +1,37 @@
+# Host and editor metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.pi
+*~
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+
+# Large local game inputs and generated workspaces.
+/local/
+
+# Extracted build cache.
+/port/game/audio/
+/port/game/images/
+
+# Generated game payloads, staging trees, manifests, logs, and packages.
+/build/
+*.vpk
+*.psp2dmp
+*.dmp
+log.txt
+traceback.txt
+errors.txt
+
+# Downloaded SDKs, toolchains, upstream source trees, and binary archives.
+/vendor/
