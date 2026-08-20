@@ -1,0 +1,9 @@
+.git
+.venv
+build
+local
+vendor
+*.vpk
+*.psp2dmp
+__pycache__
+*.pyc

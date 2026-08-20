@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "sources": {
+    "icon": {
+      "path": "assets/vita-livearea/icon0.jpg",
+      "sha256": "0299c935a6aeaca4b7f99c1407cfcb2aa6bb14d95f04302657d7624aadef90e4"
+    },
+    "background": {
+      "path": "assets/vita-livearea/background.avif",
+      "sha256": "f957a78f34ce6c11f6a27967e3760ecb340990d929bf99fdf1ef2665fc64b0c4"
+    }
+  },
+  "outputs": {
+    "sce_sys/icon0.png": {
+      "size": 13809,
+      "sha256": "b8b69b4b04d9c2b5bd8fc7e7f321199322d2a13ca7d146365b105f11a9e1ea89",
+      "png_bit_depth": 8,
+      "png_color_type": 3,
+      "palette_colors": 256
+    },
+    "sce_sys/livearea/contents/bg.png": {
+      "size": 196629,
+      "sha256": "a67fb8eb2a7e9952a924851acace051d2cae5e194584343c5aff5ac59dc30d8f",
+      "png_bit_depth": 8,
+      "png_color_type": 3,
+      "palette_colors": 256
+    },
+    "sce_sys/livearea/contents/startup.png": {
+      "size": 30372,
+      "sha256": "d7c0c8ccc7b8fefe0da6ef1dc73411f8c17d4419f867f0db6596dc7853769af9",
+      "png_bit_depth": 8,
+      "png_color_type": 3,
+      "palette_colors": 256
+    }
+  }
+}
