@@ -74,16 +74,16 @@ init 900 python:
     style.navigation_button.xpadding = 18
     style.navigation_button.ypadding = 5
     style.navigation_button.background = Solid("#00000000")
-    style.navigation_button.hover_background = Solid("#e9e5f2cc")
-    style.navigation_button.selected_idle_background = Solid("#dbeaf7dd")
-    style.navigation_button.selected_hover_background = Solid("#dddff3ee")
+    style.navigation_button.hover_background = Solid("#d8cef3ff")
+    style.navigation_button.selected_idle_background = Solid("#c6e4f7ff")
+    style.navigation_button.selected_hover_background = Solid("#cbd4f7ff")
     style.navigation_button_text.color = "#596174"
-    style.navigation_button_text.hover_color = "#5548a5"
-    style.navigation_button_text.hover_outlines = [(1, "#ffffffcc", 0, 0)]
-    style.navigation_button_text.selected_idle_color = "#1d5597"
-    style.navigation_button_text.selected_idle_outlines = [(1, "#ffffffcc", 0, 0)]
-    style.navigation_button_text.selected_hover_color = "#394a9d"
-    style.navigation_button_text.selected_hover_outlines = [(1, "#ffffffcc", 0, 0)]
+    style.navigation_button_text.hover_color = "#5432a5"
+    style.navigation_button_text.hover_outlines = []
+    style.navigation_button_text.selected_idle_color = "#0067b8"
+    style.navigation_button_text.selected_idle_outlines = []
+    style.navigation_button_text.selected_hover_color = "#253fa3"
+    style.navigation_button_text.selected_hover_outlines = []
 
     style.vita_navigation_panel.xsize = 286
     style.vita_navigation_panel.xpadding = 10
@@ -217,14 +217,14 @@ init 900 python:
     style.mute_all_button_text.size = 34
     for button_style_name in ("radio_button", "check_button", "mute_all_button"):
         button_style = getattr(style, button_style_name)
-        button_style.hover_background = Solid("#b9ddffdd")
-        button_style.selected_idle_background = Solid("#005b9fe8")
-        button_style.selected_hover_background = Solid("#0074c8f0")
+        button_style.hover_background = Solid("#d8cef3ff")
+        button_style.selected_idle_background = Solid("#c6e4f7ff")
+        button_style.selected_hover_background = Solid("#cbd4f7ff")
     for text_style_name in ("radio_button_text", "check_button_text", "mute_all_button_text"):
         text_style = getattr(style, text_style_name)
-        text_style.hover_color = "#003f7a"
-        text_style.selected_idle_color = "#ffffff"
-        text_style.selected_hover_color = "#ffffff"
+        text_style.hover_color = "#5432a5"
+        text_style.selected_idle_color = "#0067b8"
+        text_style.selected_hover_color = "#253fa3"
 
     # Confirmation prompts are modal on Vita and must remain readable after the
     # 1694x960 canvas is scaled to the physical display.
@@ -280,6 +280,7 @@ style vita_confirm_button_text is confirm_button_text
 
 
 default vita_l_held = False
+default persistent.vita_side_buttons = True
 
 
 # The source navigation screen contains desktop-only Help and a game-specific
@@ -403,7 +404,7 @@ screen vita_sidebar():
     layer "vita_overlay"
     zorder 100
 
-    if quick_menu:
+    if quick_menu and persistent.vita_side_buttons:
         vbox:
             style_prefix "vita_side"
             xpos vita_sidebar_inset
@@ -450,6 +451,11 @@ screen preferences():
                     textbutton "Unseen Text" action Preference("skip", "toggle")
                     textbutton "After Choices" action Preference("after choices", "toggle")
                     textbutton "Transitions" action InvertSelected(Preference("transitions", "toggle"))
+
+                vbox:
+                    style_prefix "check"
+                    label "Interface"
+                    textbutton "Show Side Buttons" action ToggleField(persistent, "vita_side_buttons")
 
             null height 20
 

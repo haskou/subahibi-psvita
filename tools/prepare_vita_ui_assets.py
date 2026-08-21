@@ -114,6 +114,12 @@ def resize_rows(rows: list[bytes], target_height: int) -> list[bytes]:
     return result
 
 
+def remove_lateral_fade(rows: list[bytes], width: int) -> list[bytes]:
+    """Extend each row's center pixel across its full width."""
+    center_offset = (width // 2) * 4
+    return [row[center_offset : center_offset + 4] * width for row in rows]
+
+
 def chunk(kind: bytes, payload: bytes) -> bytes:
     checksum = binascii.crc32(kind)
     checksum = binascii.crc32(payload, checksum) & 0xFFFFFFFF
@@ -159,10 +165,23 @@ def main() -> int:
         raise ValueError(
             "unexpected source textbox dimensions: %dx%d" % (width, source_height)
         )
-    encode_rgba(TEXTBOX, width, resize_rows(rows, TARGET_HEIGHT))
-    output_width, output_height, _rows = decode_rgba(TEXTBOX)
+    # The source raster combines a useful vertical fade with lateral fades that
+    # make dialogue hard to read near the edges. Preserve the center column's
+    # original colour and alpha profile, then extend it horizontally so the
+    # enlarged Vita textbox remains translucent but has no lateral gradients.
+    resized_rows = resize_rows(rows, TARGET_HEIGHT)
+    if len(resized_rows) != TARGET_HEIGHT:
+        raise ValueError("textbox resize produced an invalid row count")
+    output_rows = remove_lateral_fade(resized_rows, width)
+    encode_rgba(TEXTBOX, width, output_rows)
+    output_width, output_height, output_rows = decode_rgba(TEXTBOX)
     if (output_width, output_height) != (1280, TARGET_HEIGHT):
         raise ValueError("generated textbox dimensions are invalid")
+    if any(row != row[:4] * output_width for row in output_rows):
+        raise ValueError("generated textbox still contains a lateral gradient")
+    alpha_values = [row[3] for row in output_rows]
+    if min(alpha_values) != 0 or max(alpha_values) != 204:
+        raise ValueError("generated textbox did not preserve the source alpha range")
     update_manifest()
     report = {
         "format": 1,
@@ -170,6 +189,9 @@ def main() -> int:
         "path": "build/game/gui/textbox.png",
         "source_dimensions": [width, source_height],
         "output_dimensions": [output_width, output_height],
+        "lateral_fade_removed": True,
+        "alpha_range": [min(alpha_values), max(alpha_values)],
+        "fully_opaque": False,
         "source_sha256": source_hash,
         "output_sha256": sha256(TEXTBOX),
     }

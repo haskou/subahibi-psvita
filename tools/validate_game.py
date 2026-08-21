@@ -121,6 +121,9 @@ def main() -> int:
             "config.images_directory = None",
             "config.missing_show = vita_lazy_missing_show",
             "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
+            "default persistent.vita_side_buttons = True",
+            'textbutton "Show Side Buttons" action ToggleField(persistent, "vita_side_buttons")',
+            "if quick_menu and persistent.vita_side_buttons:",
         ),
         errors,
     )
@@ -128,7 +131,7 @@ def main() -> int:
         game / "options.rpy",
         (
             'define config.name = _("Subahibi")',
-            'define config.version = "1.0.3"',
+            'define config.version = "1.0.6"',
             "define config.developer = False", "define config.console = False",
         ),
         errors,
