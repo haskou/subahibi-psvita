@@ -577,19 +577,22 @@ screen save():
     tag menu
 
 
-    use file_slots(_("Save"))
+    use file_slots(_("Save"), load_mode=False)
 
 
 screen load():
     tag menu
 
 
-    use file_slots(_("Load"))
+    use file_slots(_("Load"), load_mode=True)
 
 
-screen file_slots(title):
+screen file_slots(title, load_mode=False):
 
     default page_name_value = FilePageNameInputValue(pattern=_("Page {}"), auto=_("Automatic saves"), quick=_("Quick saves"))
+
+    $ used_slots = FileUsedSlots(highest_first=False) if load_mode else []
+    $ first_used_slot = used_slots[0] if used_slots else None
 
     use game_menu(title):
 
@@ -624,11 +627,12 @@ screen file_slots(title):
                     $ slot = i + 1
 
                     button:
-                        action FileAction(slot)
+                        action (FileLoad(slot) if load_mode else FileSave(slot))
+                        default_focus (load_mode and slot == first_used_slot)
 
                         has vbox
 
-                        add FileScreenshot(slot) xalign 0.5
+                        add FileScreenshot(slot) xalign 0.5 xysize (256, 144)
 
                         text FileTime(slot, format=_("{#file_time}%Y-%m-%d %H:%M"), empty=_("Empty Slot")):
                             style "slot_time_text"

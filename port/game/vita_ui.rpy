@@ -2,7 +2,54 @@
 # copied RPYC files during the build and is not looked up at runtime.
 
 
+init -1800 python:
+    # Ren'Py normally walks every file in every RPA twice during startup: once
+    # to create 33,000+ audio.* variables and once to register every image.
+    # The BGI compatibility layer uses explicit audio paths, so the audio
+    # namespace is unnecessary. Images are all uniquely named WebP files and
+    # can be resolved in constant time from the already-loaded RPA index when
+    # they are first shown.
+    config.audio_directory = None
+    config.images_directory = None
+
+    def vita_lazy_image(what):
+        if not isinstance(what, tuple):
+            return None
+
+        image_name = " ".join(what).lower()
+        filename = "images/{}.webp".format(image_name)
+
+        if renpy.loadable(filename):
+            displayable = renpy.display.im.Image(filename)
+            # Registering the displayable also repairs ImageReference objects
+            # restored directly from a save, which do not pass through
+            # config.missing_show before they are rendered.
+            renpy.display.image.register_image(what, displayable)
+            return displayable
+
+        return None
+
+    def vita_lazy_missing_show(name, what, layer):
+        return vita_lazy_image(what)
+
+    _vita_image_reference_find_target = renpy.display.image.ImageReference.find_target
+
+    def vita_lazy_find_image_reference(self):
+        name = self.name
+        if not isinstance(name, tuple):
+            name = tuple(name.split())
+        if name not in renpy.display.image.images:
+            vita_lazy_image(name)
+        return _vita_image_reference_find_target(self)
+
+    renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference
+
+    config.missing_show = vita_lazy_missing_show
+
+
 init 900 python:
+    style.create("vita_navigation_panel", "empty")
+
     # The 1280x960 layout is letterboxed to 725x544 on Vita. Keep the readable
     # 36 px dialogue size, but give longer English lines substantially more
     # horizontal and vertical room.
@@ -17,8 +64,43 @@ init 900 python:
     style.say_label.size = 42
     style.nvl_dialogue.size = 38
 
-    style.navigation_button_text.size = 42
-    style.navigation_button_text.outlines = [(2, "#000000cc", 0, 0)]
+    # One restrained navigation language is shared by the main menu, game
+    # menus and Return. Focus uses purple; the active screen remains blue.
+    style.navigation_button_text.font = gui.interface_text_font
+    style.navigation_button_text.size = 38
+    style.navigation_button_text.outlines = [(1, "#ffffff99", 0, 0)]
+    style.navigation_button.xsize = 260
+    style.navigation_button.ysize = 58
+    style.navigation_button.xpadding = 18
+    style.navigation_button.ypadding = 5
+    style.navigation_button.background = Solid("#00000000")
+    style.navigation_button.hover_background = Solid("#e9e5f2cc")
+    style.navigation_button.selected_idle_background = Solid("#dbeaf7dd")
+    style.navigation_button.selected_hover_background = Solid("#dddff3ee")
+    style.navigation_button_text.color = "#596174"
+    style.navigation_button_text.hover_color = "#5548a5"
+    style.navigation_button_text.hover_outlines = [(1, "#ffffffcc", 0, 0)]
+    style.navigation_button_text.selected_idle_color = "#1d5597"
+    style.navigation_button_text.selected_idle_outlines = [(1, "#ffffffcc", 0, 0)]
+    style.navigation_button_text.selected_hover_color = "#394a9d"
+    style.navigation_button_text.selected_hover_outlines = [(1, "#ffffffcc", 0, 0)]
+
+    style.vita_navigation_panel.xsize = 286
+    style.vita_navigation_panel.xpadding = 10
+    style.vita_navigation_panel.ypadding = 14
+    style.vita_navigation_panel.background = Solid("#f7f9fbb8")
+
+    # Loading a save must return directly to the saved game state. Reopening
+    # the menu that initiated a runtime reload is desktop-oriented behaviour
+    # and is confusing on Vita, where it looks as if loading did nothing.
+    config.reload_menu = False
+
+    # Vita screenshots contain the complete 16:9 canvas, including the black
+    # pillarboxes. Store and display them at the same aspect ratio instead of
+    # stretching them vertically into the desktop GUI's 4:3 thumbnail size.
+    config.thumbnail_width = 256
+    config.thumbnail_height = 144
+    gui.slot_button_height = 214
 
     # File-slot text from the desktop layout becomes unreadable after the
     # 1280x960 interface is scaled to the Vita display.
@@ -28,6 +110,18 @@ init 900 python:
     style.slot_button_text.size = 34
     style.slot_time_text.size = 32
     style.slot_name_text.size = 34
+    style.slot_button.hover_background = Solid("#b9ddffdd")
+    style.slot_button.selected_idle_background = Solid("#005b9fe8")
+    style.slot_button.selected_hover_background = Solid("#0074c8f0")
+    style.slot_button_text.selected_idle_color = "#ffffff"
+    style.slot_button_text.selected_hover_color = "#ffffff"
+
+    style.page_button.xpadding = 10
+    style.page_button.hover_background = Solid("#b9ddffdd")
+    style.page_button.selected_idle_background = Solid("#005b9fe8")
+    style.page_button.selected_hover_background = Solid("#0074c8f0")
+    style.page_button_text.selected_idle_color = "#ffffff"
+    style.page_button_text.selected_hover_color = "#ffffff"
 
     # History is rendered inside the same scaled 4:3 viewport as dialogue.
     # Match its body text to the readable dialogue size and let the viewport
@@ -43,6 +137,13 @@ init 900 python:
     config.intra_transition = None
     config.main_game_transition = None
     config.game_main_transition = None
+
+    # Desktop Ren'Py predicts every ShowMenu target reachable from the current
+    # navigation screen. On Vita that repeatedly walks the Load screen and its
+    # save thumbnails even while opening Preferences or About. These screens
+    # are small enough to build on demand, which avoids the recurring pause.
+    config.predict_screens = False
+    config.predict_file_pages = False
 
     # Use a fixed 16:9 virtual canvas containing an unscaled 1280x960 game
     # rectangle. Vita then scales the complete 1694x960 canvas to 960x544,
@@ -114,6 +215,16 @@ init 900 python:
     style.check_button_text.size = 34
     style.slider_button_text.size = 34
     style.mute_all_button_text.size = 34
+    for button_style_name in ("radio_button", "check_button", "mute_all_button"):
+        button_style = getattr(style, button_style_name)
+        button_style.hover_background = Solid("#b9ddffdd")
+        button_style.selected_idle_background = Solid("#005b9fe8")
+        button_style.selected_hover_background = Solid("#0074c8f0")
+    for text_style_name in ("radio_button_text", "check_button_text", "mute_all_button_text"):
+        text_style = getattr(style, text_style_name)
+        text_style.hover_color = "#003f7a"
+        text_style.selected_idle_color = "#ffffff"
+        text_style.selected_hover_color = "#ffffff"
 
     # Confirmation prompts are modal on Vita and must remain readable after the
     # 1694x960 canvas is scaled to the physical display.
@@ -123,7 +234,16 @@ init 900 python:
     style.vita_confirm_prompt_text.xsize = 780
     style.vita_confirm_button.xsize = 260
     style.vita_confirm_button.ysize = 100
+    style.vita_confirm_button.background = Solid("#e5e8edff")
+    style.vita_confirm_button.hover_background = Solid("#e9e5f2ff")
+    style.vita_confirm_button.selected_idle_background = Solid("#1468a8ff")
+    style.vita_confirm_button.selected_hover_background = Solid("#4e56a8ff")
     style.vita_confirm_button_text.size = 40
+    style.vita_confirm_button_text.color = "#4f5664"
+    style.vita_confirm_button_text.hover_color = "#5548a5"
+    style.vita_confirm_button_text.selected_idle_color = "#ffffff"
+    style.vita_confirm_button_text.selected_hover_color = "#ffffff"
+    style.vita_confirm_button_text.outlines = []
 
     # Keep enough decoded images for nearby scene changes without allowing the
     # desktop default to consume most of the Vita process memory.
@@ -166,28 +286,31 @@ default vita_l_held = False
 # Extra entry whose gallery dependencies are not present in the Vita payload.
 # Replace it completely so no hidden action from the compiled screen remains.
 screen navigation():
-    vbox:
-        style_prefix "navigation"
+    frame:
+        style "vita_navigation_panel"
         xpos gui.navigation_xpos
-        xoffset -24
+        xoffset -34
         yalign 0.5
-        spacing gui.navigation_spacing
 
-        if main_menu:
-            textbutton "Start" action Start()
-        else:
-            textbutton "History" action ShowMenu("history")
-            textbutton "Save" action ShowMenu("save")
+        vbox:
+            style_prefix "navigation"
+            spacing 10
 
-        textbutton "Load" action ShowMenu("load")
-        textbutton "Preferences" action ShowMenu("preferences")
+            if main_menu:
+                textbutton "Start" action Start()
+            else:
+                textbutton "History" action ShowMenu("history")
+                textbutton "Save" action ShowMenu("save")
 
-        if _in_replay:
-            textbutton "End Replay" action EndReplay(confirm=True)
-        elif not main_menu:
-            textbutton "Main Menu" action MainMenu()
+            textbutton "Load" action ShowMenu("load")
+            textbutton "Preferences" action ShowMenu("preferences")
 
-        textbutton "About" action ShowMenu("about")
+            if _in_replay:
+                textbutton "End Replay" action EndReplay(confirm=True)
+            elif not main_menu:
+                textbutton "Main Menu" action MainMenu()
+
+            textbutton "About" action ShowMenu("about")
 
 
 # Do not expose the source game's untranslated gui.about value. The port only
@@ -287,8 +410,8 @@ screen vita_sidebar():
             yalign 0.28
             spacing vita_sidebar_spacing
 
-            textbutton "SELECT\nQ.S" action QuickSave() keyboard_focus False
-            textbutton "L+SELECT\nQ.L" action QuickLoad() keyboard_focus False
+            textbutton "SELECT\nQ. Save" action QuickSave() keyboard_focus False
+            textbutton "L+SELECT\nQ. Load" action QuickLoad() keyboard_focus False
 
         vbox:
             style_prefix "vita_side"
