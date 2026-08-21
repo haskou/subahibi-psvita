@@ -80,7 +80,7 @@ def main() -> int:
             mksfoex,
             "-d", "ATTRIBUTE2=12",
             "-d", "PARENTAL_LEVEL=1",
-            "-s", "APP_VER=01.02",
+            "-s", "APP_VER=01.03",
             "-s", "TITLE_ID=%s" % TITLE_ID,
             TITLE,
             str(param_sfo),
