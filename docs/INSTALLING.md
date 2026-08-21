@@ -23,18 +23,25 @@ the values with `SHA256SUMS`.
 
 ## Install with VitaShell
 
-Keep at least 2.6 GB free on `ux0:`.
+Keep at least 2.3 GB free on `ux0:`.
 
-1. Delete an older `SHBI00001` bubble if one is installed.
-2. Copy the VPK and all three RPA files to `ux0:data/Subahibi/` by USB or FTP.
-3. In VitaShell, select `Subahibi.vpk`, press Cross and confirm installation.
-4. Open `ux0:data/Subahibi/` in VitaShell and copy the three `.rpa` files.
-5. Open `ux0:app/SHBI00001/game/` and paste them there.
-6. Confirm that all three RPA files are present, then launch **Subahibi**.
-7. Delete `ux0:data/Subahibi/` after the game has been tested successfully.
+1. Create `ux0:data/Subahibi/` in VitaShell.
+2. Copy all three RPA files into `ux0:data/Subahibi/` by USB or FTP.
+3. Copy `Subahibi.vpk` to `ux0:data/`. Do not install it directly from
+   `uma0:`; first copy it onto `ux0:` so VitaShell reads and extracts it from
+   the destination filesystem.
+4. In VitaShell, select `Subahibi.vpk`, press Cross and confirm installation.
+5. Confirm that all three RPA files remain in `ux0:data/Subahibi/`, then launch
+   **Subahibi**.
 
-The media files are copied directly rather than installed inside the VPK to
-avoid VitaShell's failure on the previous VPK larger than 2 GiB.
+Do not copy the RPA files into `ux0:app/SHBI00001/game/`. That application
+directory is replaced when a VPK is reinstalled. The port reads media directly
+from `ux0:data/Subahibi/`, so later updates require installing only the new VPK.
+
+If an earlier build already has the archives under
+`ux0:app/SHBI00001/game/`, use VitaShell to **move** all three files to
+`ux0:data/Subahibi/` before installing this VPK. A move on the same `ux0:`
+filesystem should not retransmit their contents.
 
 ## Diagnostics
 
