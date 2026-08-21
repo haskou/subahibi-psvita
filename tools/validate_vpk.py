@@ -305,6 +305,7 @@ def main() -> int:
                 'ShowMenu("load")',
                 '"About"',
                 'ShowMenu("about")',
+                '"Show Side Buttons"',
                 '"Subahibi"',
                 '"pad_b_press"',
                 '"pad_y_press"',
@@ -337,10 +338,12 @@ def main() -> int:
                 "config.images_directory = None",
                 "config.missing_show = vita_lazy_missing_show",
                 "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
-                'style.navigation_button.hover_background = Solid("#e9e5f2cc")',
-                'style.navigation_button.selected_idle_background = Solid("#dbeaf7dd")',
-                'style.navigation_button_text.hover_color = "#5548a5"',
-                'style.navigation_button_text.selected_idle_color = "#1d5597"',
+                'style.navigation_button.hover_background = Solid("#d8cef3ff")',
+                'style.navigation_button.selected_idle_background = Solid("#c6e4f7ff")',
+                'style.navigation_button.selected_hover_background = Solid("#cbd4f7ff")',
+                'style.navigation_button_text.hover_color = "#5432a5"',
+                'style.navigation_button_text.selected_idle_color = "#0067b8"',
+                'text_style.selected_idle_color = "#0067b8"',
                 'style.vita_navigation_panel.background = Solid("#f7f9fbb8")',
                 "config.reload_menu = False",
                 "style.history_text.size = 40",
@@ -432,7 +435,7 @@ def main() -> int:
             errors.append("TITLE_ID mismatch: %r" % sfo.get("TITLE_ID"))
         if sfo.get("TITLE") != EXPECTED_TITLE:
             errors.append("TITLE mismatch: %r" % sfo.get("TITLE"))
-        if sfo.get("APP_VER") != "01.02":
+        if sfo.get("APP_VER") != "01.00":
             errors.append("APP_VER mismatch: %r" % sfo.get("APP_VER"))
         if sfo.get("ATTRIBUTE2") != 12:
             errors.append("ATTRIBUTE2 mismatch: %r" % sfo.get("ATTRIBUTE2"))
