@@ -15,8 +15,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GAME = PROJECT_ROOT / "build/game"
 REQUIRED_FILES = {
     "script.rpy", "options.rpy", "gui.rpy", "screens.rpy",
-    "bgi_core.rpy", "bgi_func.rpy", "makerlogo.rpy", "main.rpy",
-    "1-1_0710_dream.rpy", "vita_ui.rpy", "vita_renderer.rpy",
+    "bgi_core.rpy", "bgi_func.rpy", "makerlogo.rpym", "main.rpym",
+    "1-1_0710_dream.rpym", "vita_ui.rpy", "vita_renderer.rpy",
+    "vita_lazy_modules.rpy",
     "SourceHanSansLite.ttf", "simhei.ttf", "gui/main_menu.png",
     "images/logo1.webp", "images/SGScSlct990000.webp",
     "audio/bgm003.ogg", "audio/bgm019.ogg",
@@ -90,9 +91,9 @@ def main() -> int:
     missing_required = sorted(REQUIRED_FILES - set(actual_files))
     if missing_required:
         errors.append("required files missing: %s" % ", ".join(missing_required))
-    source_count = sum(relative.endswith(".rpy") for relative in actual_files)
-    if source_count != 132:
-        errors.append("expected 132 Ren'Py sources, found %d" % source_count)
+    source_count = sum(relative.endswith((".rpy", ".rpym")) for relative in actual_files)
+    if source_count != 133:
+        errors.append("expected 133 Ren'Py/module sources, found %d" % source_count)
     compiled = sorted(
         relative for relative in actual_files
         if relative.endswith((".rpyc", ".rpymc"))
@@ -116,6 +117,10 @@ def main() -> int:
             "gui.textbox_height = 320", "style.say_dialogue.size = 40",
             "style.history_text.size = 40", '"pad_b_press"',
             'event_name == "pad_dpdown_press"',
+            "config.audio_directory = None",
+            "config.images_directory = None",
+            "config.missing_show = vita_lazy_missing_show",
+            "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
         ),
         errors,
     )
@@ -123,7 +128,27 @@ def main() -> int:
         game / "options.rpy",
         (
             'define config.name = _("Subahibi")',
+            'define config.version = "1.0.2"',
             "define config.developer = False", "define config.console = False",
+        ),
+        errors,
+    )
+    require_text(
+        game / "screens.rpy",
+        (
+            'use file_slots(_("Load"), load_mode=True)',
+            "action (FileLoad(slot) if load_mode else FileSave(slot))",
+            "default_focus (load_mode and slot == first_used_slot)",
+        ),
+        errors,
+    )
+    require_text(
+        game / "vita_lazy_modules.rpy",
+        (
+            'data["subahibi_bgi_modules"] = modules',
+            '"subahibi_bgi_modules"',
+            '"game/%s.rpym" % module_name',
+            "if not module_names:",
         ),
         errors,
     )

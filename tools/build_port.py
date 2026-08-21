@@ -24,6 +24,8 @@ def main() -> int:
     run("tools/prepare_game_media.py")
     run("tools/check_game_inputs.py")
     run("tools/build_game.py", "--all-media", "--clean")
+    run("tools/optimize_bgi_scripts.py")
+    run("tools/build_lazy_bgi_modules.py")
     run("tools/prepare_vita_ui_assets.py")
     run("tools/validate_game.py")
     run("tools/prepare_vita_staging.py", "--clean")
