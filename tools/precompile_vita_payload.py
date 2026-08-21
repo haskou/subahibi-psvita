@@ -23,8 +23,10 @@ from project_paths import PROJECT_ROOT, RENPY_SDK, display_path, renpy_sdk_pytho
 DEFAULT_STAGING = PROJECT_ROOT / "build/staging"
 DEFAULT_SDK = RENPY_SDK
 DEFAULT_REPORT = PROJECT_ROOT / "build/PRECOMPILE_REPORT.json"
+DEFAULT_MODULE_REPORT = PROJECT_ROOT / "build/BGI_MODULE_REPORT.json"
 CACHE_FILES = ("bytecode.rpyb", "pyanalysis.rpyb", "screens.rpyb")
 COMPILED_SUFFIXES = {".rpyc", ".rpymc"}
+SCRIPT_NODE_EPOCH = 1700000000
 
 
 def sha256(path: Path) -> str:
@@ -48,6 +50,7 @@ def main() -> int:
     parser.add_argument("--staging", type=Path, default=DEFAULT_STAGING)
     parser.add_argument("--sdk", type=Path, default=DEFAULT_SDK)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument("--module-report", type=Path, default=DEFAULT_MODULE_REPORT)
     args = parser.parse_args()
 
     staging = args.staging.resolve()
@@ -81,10 +84,33 @@ def main() -> int:
             return set()
 
         shutil.copytree(sdk_renpy, base / "renpy", ignore=ignore_common)
+        script_loader = base / "renpy/script.py"
+        script_source = script_loader.read_text(encoding="utf-8")
+        clock_assignment = "        version = int(time.time())"
+        stable_assignment = "        version = int(os.environ.get('SOURCE_DATE_EPOCH', time.time()))"
+        if script_source.count(clock_assignment) != 1:
+            raise ValueError("cannot locate Ren'Py script-node clock assignment")
+        script_loader.write_text(
+            script_source.replace(clock_assignment, stable_assignment),
+            encoding="utf-8",
+        )
         shutil.copytree(staging / "renpy/common", base / "renpy/common")
         os.symlink(str(sdk / "lib"), str(base / "lib"), target_is_directory=True)
         os.symlink(str(sdk / "module"), str(base / "module"), target_is_directory=True)
         shutil.copytree(staging, project)
+
+        module_names = []
+        module_preloader = project / "game/000_precompile_bgi_modules.rpy"
+        if args.module_report.is_file():
+            module_report = json.loads(args.module_report.read_text(encoding="utf-8"))
+            module_names = sorted(set(module_report.get("module_by_label", {}).values()))
+            if module_names:
+                module_preloader.write_text(
+                    "init -2000 python:\n"
+                    + "    for _subahibi_module in %r:\n" % module_names
+                    + "        renpy.load_module(_subahibi_module)\n",
+                    encoding="utf-8",
+                )
 
         command = [
             str(renpy_sdk_python(sdk)),
@@ -93,9 +119,12 @@ def main() -> int:
             "compile",
             "--keep-orphan-rpyc",
         ]
+        compile_environment = os.environ.copy()
+        compile_environment["SOURCE_DATE_EPOCH"] = str(SCRIPT_NODE_EPOCH)
         completed = subprocess.run(
             command,
             cwd=PROJECT_ROOT,
+            env=compile_environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
@@ -105,6 +134,12 @@ def main() -> int:
                 "Ren'Py precompilation failed (%d):\n%s"
                 % (completed.returncode, completed.stdout)
             )
+
+        if module_names:
+            module_preloader.unlink()
+            compiled_preloader = module_preloader.with_suffix(".rpyc")
+            if compiled_preloader.exists():
+                compiled_preloader.unlink()
 
         compiled_game = compiled_files(project / "game")
         changed_orphans = [
@@ -179,6 +214,7 @@ def main() -> int:
     report = {
         "format": 1,
         "mode": "host-precompiled-renpy-7.4.9",
+        "script_node_epoch": SCRIPT_NODE_EPOCH,
         "staging": str(staging.relative_to(PROJECT_ROOT)),
         "sdk": display_path(sdk),
         "source_less_game_rpyc_preserved": len(orphan_game),

@@ -19,7 +19,6 @@ DEFAULT_ARCHIVE = RENPY_VITA_ARCHIVE
 DEFAULT_GAME = PROJECT_ROOT / "build/game"
 DEFAULT_OUTPUT = PROJECT_ROOT / "build/staging"
 DEFAULT_LIVEAREA = PROJECT_ROOT / "assets/vita-livearea/sce_sys"
-DEFAULT_OVERLAY = PROJECT_ROOT / "port/game"
 ASSET_PREFIX = "Ren'Py PSVita Distribution Tool/Assets/"
 EXPECTED_ARCHIVE_SHA256 = "74614f39b167a983f7c224c85b832d1a3f2f388c5983ff1cb1620f7e2ea6cbc7"
 
@@ -49,7 +48,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--game", type=Path, default=DEFAULT_GAME)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--livearea", type=Path, default=DEFAULT_LIVEAREA)
-    parser.add_argument("--overlay", type=Path, default=DEFAULT_OVERLAY)
     parser.add_argument(
         "--fallback-save-directory",
         help="Use this Vita save directory when the game omits config.save_directory.",
@@ -69,15 +67,12 @@ def main() -> int:
     game = args.game.resolve()
     output = args.output.resolve()
     livearea = args.livearea.resolve()
-    overlay = args.overlay.resolve()
     if not archive.is_file():
         raise FileNotFoundError("official distribution archive not found: %s" % archive)
     if not game.is_dir():
         raise FileNotFoundError("generated game directory not found: %s" % game)
     if not livearea.is_dir():
         raise FileNotFoundError("LiveArea directory not found: %s" % livearea)
-    if not overlay.is_dir():
-        raise FileNotFoundError("Vita overlay directory not found: %s" % overlay)
     archive_sha256 = sha256(archive)
     if archive_sha256.casefold() != args.expected_sha256.casefold():
         raise ValueError(
@@ -114,10 +109,21 @@ def main() -> int:
                     shutil.copyfileobj(source, destination)
                 runtime_files.append(relative.as_posix())
         shutil.copytree(game, temporary / "game")
-        shutil.copytree(overlay, temporary / "game", dirs_exist_ok=True)
         shutil.copytree(livearea, temporary / "sce_sys")
+        renpy_launcher = temporary / "renpy.py"
+        launcher_source = renpy_launcher.read_text(encoding="utf-8")
+        vita_renderer = '        os.environ["RENPY_RENDERER"] = "gles"\n'
+        vita_searchpath = (
+            vita_renderer
+            + '        os.environ["RENPY_SEARCHPATH"] = "ux0:/data/Subahibi"\n'
+            + '        os.environ["RENPY_PERFORMANCE_TEST"] = "0"\n'
+        )
+        if launcher_source.count(vita_renderer) != 1:
+            raise ValueError("cannot locate Vita launcher environment setup in renpy.py")
+        renpy_launcher.write_text(
+            launcher_source.replace(vita_renderer, vita_searchpath), encoding="utf-8"
+        )
         if args.fallback_save_directory:
-            renpy_launcher = temporary / "renpy.py"
             source = renpy_launcher.read_text(encoding="utf-8")
             old = 'return "ux0:/Ren\'Py Data/" + save_directory'
             new = (
@@ -158,7 +164,6 @@ def main() -> int:
         "runtime_sha256": archive_sha256,
         "runtime_file_count": len(runtime_files),
         "game_source": str(game.relative_to(PROJECT_ROOT)),
-        "overlay_source": str(overlay.relative_to(PROJECT_ROOT)),
         "livearea_source": str(livearea.relative_to(PROJECT_ROOT)),
         "output": str(output.relative_to(PROJECT_ROOT)),
         "file_count": len(all_files),

@@ -43,6 +43,7 @@ REQUIRED_FILES = {
     "game/script.rpyc",
     "game/vita_ui.rpyc",
     "game/vita_renderer.rpyc",
+    "game/vita_lazy_modules.rpyc",
     "game/cache/bytecode.rpyb",
     "game/cache/pyanalysis.rpyb",
     "game/cache/screens.rpyb",
@@ -51,6 +52,13 @@ FORBIDDEN_RUNTIME_TRANSLATION_FILES = {
     "game/vita_translation.rpy",
     "game/vita_translation.rpyc",
     "game/vita_translation.json",
+}
+FORBIDDEN_VITA_PRESPLASH_FILES = {
+    "game/presplash.png",
+    "game/presplash.jpg",
+    "game/presplash.webp",
+    "game/presplash_foreground.png",
+    "game/presplash_background.png",
 }
 RPYC_MAGIC = b"RENPY RPC2"
 
@@ -249,6 +257,12 @@ def main() -> int:
             errors.append(
                 "runtime translation files present: %s" % ", ".join(forbidden_translation)
             )
+        forbidden_presplash = sorted(FORBIDDEN_VITA_PRESPLASH_FILES & archive_names)
+        if forbidden_presplash:
+            errors.append(
+                "Vita presplash may prevent GLES surface recreation: %s"
+                % ", ".join(forbidden_presplash)
+            )
         source_language_ui = sorted(
             name for name in archive_names if name.startswith("game/tl/")
         )
@@ -259,6 +273,26 @@ def main() -> int:
             )
         if not any(name.startswith("game/") for name in names):
             errors.append("game/ payload is absent")
+        lazy_modules = sorted(
+            name for name in archive_names
+            if name.startswith("game/") and name.endswith(".rpymc")
+        )
+        if len(lazy_modules) != 124:
+            errors.append(
+                "lazy story module count mismatch: expected 124, got %d"
+                % len(lazy_modules)
+            )
+        if "game/2_0716.rpyc" in archive_names:
+            errors.append("2_0716 is monolithic RPYC instead of a lazy RPYMC module")
+
+        try:
+            launcher = archive.read("renpy.py").decode("utf-8")
+            if 'os.environ["RENPY_SEARCHPATH"] = "ux0:/data/Subahibi"' not in launcher:
+                errors.append("persistent media search path is missing from renpy.py")
+            if 'os.environ["RENPY_PERFORMANCE_TEST"] = "0"' not in launcher:
+                errors.append("redundant Vita GL performance test is not disabled")
+        except (KeyError, UnicodeDecodeError) as error:
+            errors.append("cannot inspect Ren'Py launcher: %s" % error)
 
         try:
             overlay_strings = rpyc_strings(archive.read("game/vita_ui.rpyc"))
@@ -279,8 +313,8 @@ def main() -> int:
                 '"pad_leftshoulder_press"',
                 '"pad_leftshoulder_release"',
                 '"pad_back_press"',
-                '"SELECT\\nQ.S"',
-                '"L+SELECT\\nQ.L"',
+                '"SELECT\\nQ. Save"',
+                '"L+SELECT\\nQ. Load"',
                 '"START\\nMenu"',
                 '"vita_overlay"',
                 "vita_sidebar",
@@ -295,6 +329,20 @@ def main() -> int:
                     errors.append("Vita UI token is missing: %s" % token)
             for marker in (
                 "style.slot_time_text.size = 32",
+                "config.thumbnail_width = 256",
+                "config.thumbnail_height = 144",
+                "config.predict_screens = False",
+                "config.predict_file_pages = False",
+                "config.audio_directory = None",
+                "config.images_directory = None",
+                "config.missing_show = vita_lazy_missing_show",
+                "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
+                'style.navigation_button.hover_background = Solid("#e9e5f2cc")',
+                'style.navigation_button.selected_idle_background = Solid("#dbeaf7dd")',
+                'style.navigation_button_text.hover_color = "#5548a5"',
+                'style.navigation_button_text.selected_idle_color = "#1d5597"',
+                'style.vita_navigation_panel.background = Solid("#f7f9fbb8")',
+                "config.reload_menu = False",
                 "style.history_text.size = 40",
                 "config.intra_transition = None",
                 "def vita_map_pad_event(event_name):",
@@ -310,6 +358,8 @@ def main() -> int:
                 "style.vita_side_button.xsize = 190",
                 "style.vita_side_button.keyboard_focus = False",
                 "style.vita_confirm_prompt_text.size = 44",
+                'style.vita_confirm_button.selected_idle_background = Solid("#1468a8ff")',
+                'style.vita_confirm_button.selected_hover_background = Solid("#4e56a8ff")',
             ):
                 if marker not in overlay_text:
                     errors.append("Vita UI marker is missing: %s" % marker)
@@ -327,6 +377,31 @@ def main() -> int:
                     errors.append("forbidden Vita navigation entry remains: %s" % forbidden)
         except (KeyError, ValueError, struct.error, zlib.error) as error:
             errors.append("cannot inspect compiled Vita UI: %s" % error)
+
+        try:
+            file_screen_text = "\n".join(
+                rpyc_strings(archive.read("game/screens.rpyc"))
+            )
+            for marker in (
+                "load_mode",
+                "FileLoad(slot) if load_mode else FileSave(slot)",
+                "first_used_slot",
+            ):
+                if marker not in file_screen_text:
+                    errors.append("compiled file-screen marker is missing: %s" % marker)
+
+            lazy_loader_text = "\n".join(
+                rpyc_strings(archive.read("game/vita_lazy_modules.rpyc"))
+            )
+            for marker in (
+                "subahibi_bgi_modules",
+                '"game/%s.rpym" % module_name',
+                "if not module_names:",
+            ):
+                if marker not in lazy_loader_text:
+                    errors.append("compiled lazy-load marker is missing: %s" % marker)
+        except (KeyError, ValueError, struct.error, zlib.error) as error:
+            errors.append("cannot inspect compiled save/load support: %s" % error)
 
         staging_names = set(staging_files)
         if archive_names != staging_names:
@@ -357,6 +432,8 @@ def main() -> int:
             errors.append("TITLE_ID mismatch: %r" % sfo.get("TITLE_ID"))
         if sfo.get("TITLE") != EXPECTED_TITLE:
             errors.append("TITLE mismatch: %r" % sfo.get("TITLE"))
+        if sfo.get("APP_VER") != "01.02":
+            errors.append("APP_VER mismatch: %r" % sfo.get("APP_VER"))
         if sfo.get("ATTRIBUTE2") != 12:
             errors.append("ATTRIBUTE2 mismatch: %r" % sfo.get("ATTRIBUTE2"))
 
