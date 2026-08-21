@@ -51,7 +51,8 @@ The VPK intentionally contains the runtime, scripts, UI and caches but not the
 38,343 media files. VitaShell uses a signed 32-bit file-size path in relevant
 archive operations, and the former 2.32 GB monolithic VPK failed immediately
 with `0xFFFFFFFF`. Media is therefore written as three RPA-3.0 archives, each
-smaller than 1 GiB, and copied after installing the approximately 93 MB VPK.
+smaller than 1 GiB, and stored persistently in `ux0:data/Subahibi/` beside the
+approximately 50 MB VPK installation payload.
 
 ## Pipeline
 
@@ -60,11 +61,13 @@ The build:
 1. validates the pinned runtime and tracked editable port inputs;
 2. assembles the ignored game tree from `port/game/` and both media archives;
 3. copies the complete English source and media tree;
-4. generates the Vita dialogue-box raster from its editable source asset;
-5. compiles every game source and the startup caches with Ren'Py 7.4.9;
-6. packs images and audio into three RPA-3.0 archives;
-7. packages the remaining staging tree with VitaSDK;
-8. validates the VPK, RPA coverage, hashes, title metadata and staging parity.
+4. removes no-op BGI statements and groups safe compatibility calls;
+5. converts story chapters to Ren'Py modules loaded only when entered;
+6. generates the Vita dialogue-box raster from its editable source asset;
+7. compiles every core source, story module and startup cache with Ren'Py 7.4.9;
+8. packs images and audio into three RPA-3.0 archives;
+9. packages the remaining staging tree with VitaSDK;
+10. validates the VPK, RPA coverage, hashes, title metadata and staging parity.
 
 Run static tooling checks with:
 

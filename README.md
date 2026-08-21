@@ -18,14 +18,17 @@ Subahibi-audio-01.rpa
 Subahibi-audio-02.rpa
 ```
 
-Install the approximately 93 MB VPK with VitaShell, then copy the three RPA files to:
+Copy the three RPA files to the persistent data directory:
 
 ```text
-ux0:app/SHBI00001/game/
+ux0:data/Subahibi/
 ```
 
-Do not launch the game until all three archives are present. Full instructions
-and checksum verification are in [docs/INSTALLING.md](docs/INSTALLING.md).
+Then copy the approximately 50 MB VPK to `ux0:data/` and install it with
+VitaShell. Keep the archives in
+that directory; VPK updates replace `ux0:app/SHBI00001/`, while the media in
+`ux0:data/Subahibi/` survives. Full instructions and checksum verification are
+in [docs/INSTALLING.md](docs/INSTALLING.md).
 
 ## Build
 
@@ -75,6 +78,26 @@ Outputs are written to `build/dist/`. See
 
 Close the application from LiveArea. The native RenPy-Vita Quit path is hidden
 because the upstream runtime crashes while shutting down.
+
+## Startup time
+
+On PS Vita hardware, a cold launch currently takes approximately 27 seconds
+before renderer initialization. This is expected to be similar on subsequent
+launches because most of the work is repeated for every new process rather
+than generated only on first use.
+
+Measured on 21 August 2026, the main startup costs were approximately 6.0
+seconds to index the three RPA archives, 4.5 seconds to initialize Ren'Py's
+generic error handling, 4.1 seconds to load the core scripts, and 3.0 seconds
+to analyze and prepare screens. Python/Ren'Py bootstrap, garbage collection,
+translation initialization and renderer creation account for the remainder.
+
+The port disables Ren'Py's automatic startup registration of all 33,435 audio
+files and 4,908 images. Audio already uses explicit paths, while images are
+resolved from the RPA index when first shown. This reduced `Running init code`
+from 9.13 seconds to 0.83 seconds without changing the media archives. Further
+large reductions would require changing Ren'Py's RPA loader or the prebuilt
+RenPy-Vita runtime.
 
 ## Repository layout
 
