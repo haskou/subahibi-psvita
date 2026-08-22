@@ -48,6 +48,59 @@ init -1800 python:
 
 
 init 900 python:
+    # --- Vita menu palette (white / blue) -----------------------------------
+    # One state language shared by every light menu surface:
+    #   idle      dark ink text, no fill
+    #   focus     dark-blue fill + white text (hover AND d-pad focus)
+    #   selected  bright-blue fill + dark-navy text (the active item)
+    #   both      medium-blue fill + white text
+    # The large luminance change makes focus visible on the Vita screen even
+    # when glare or the textured menu artwork reduces subtle colour differences.
+    VITA_INK = "#3d4654"
+    VITA_INK_FOCUS = "#ffffff"
+    VITA_FOCUS_FILL = "#0d47a1"
+    VITA_SELECTED_FILL = "#55b8ee"
+    VITA_SELECTED_FILL_HOVER = "#1565c0"
+    VITA_SELECTED_TEXT = "#0b2a44"
+    VITA_SELECTED_HOVER_TEXT = "#ffffff"
+    VITA_PANEL = "#f7f9fb"
+
+    def vita_contrast(fg, bg):
+        """WCAG 2.x contrast ratio between two opaque #rrggbb colours."""
+        def luma(color):
+            scaled = [int(color[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
+            channel = [
+                c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                for c in scaled
+            ]
+            return (
+                0.2126 * channel[0] + 0.7152 * channel[1] + 0.0722 * channel[2]
+            )
+
+        one, other = luma(fg), luma(bg)
+        if one < other:
+            one, other = other, one
+        return (one + 0.05) / (other + 0.05)
+
+    # Every text/background pair used by the menu styles below must pass
+    # WCAG AA (4.5:1). This runs at every boot, so a future colour tweak that
+    # breaks legibility fails loudly instead of shipping unreadable menus.
+    for vita_fg, vita_bg in (
+        (VITA_INK, VITA_PANEL),
+        (VITA_INK_FOCUS, VITA_FOCUS_FILL),
+        (VITA_SELECTED_TEXT, VITA_SELECTED_FILL),
+        (VITA_SELECTED_HOVER_TEXT, VITA_SELECTED_FILL_HOVER),
+        ("#26303c", "#eef4fa"),
+        ("#23445f", "#bcdcff"),
+        ("#ffffff", "#0d47a1"),
+    ):
+        if vita_contrast(vita_fg, vita_bg) < 4.5:
+            raise Exception(
+                "Vita UI palette fails WCAG AA contrast: {} on {}".format(
+                    vita_fg, vita_bg
+                )
+            )
+
     style.create("vita_navigation_panel", "empty")
 
     # The 1280x960 layout is letterboxed to 725x544 on Vita. Keep the readable
@@ -65,25 +118,26 @@ init 900 python:
     style.nvl_dialogue.size = 38
 
     # One restrained navigation language is shared by the main menu, game
-    # menus and Return. Focus uses purple; the active screen remains blue.
+    # menus and Return.
     style.navigation_button_text.font = gui.interface_text_font
     style.navigation_button_text.size = 38
-    style.navigation_button_text.outlines = [(1, "#ffffff99", 0, 0)]
+    style.navigation_button_text.outlines = []
     style.navigation_button.xsize = 260
     style.navigation_button.ysize = 58
     style.navigation_button.xpadding = 18
     style.navigation_button.ypadding = 5
     style.navigation_button.background = Solid("#00000000")
-    style.navigation_button.hover_background = Solid("#d8cef3ff")
-    style.navigation_button.selected_idle_background = Solid("#c6e4f7ff")
-    style.navigation_button.selected_hover_background = Solid("#cbd4f7ff")
-    style.navigation_button_text.color = "#596174"
-    style.navigation_button_text.hover_color = "#5432a5"
+    style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")
+    style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
+    style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
+    style.navigation_button_text.color = VITA_INK
+    style.navigation_button_text.hover_color = VITA_INK_FOCUS
     style.navigation_button_text.hover_outlines = []
-    style.navigation_button_text.selected_idle_color = "#0067b8"
+    style.navigation_button_text.selected_idle_color = VITA_SELECTED_TEXT
     style.navigation_button_text.selected_idle_outlines = []
-    style.navigation_button_text.selected_hover_color = "#253fa3"
+    style.navigation_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
     style.navigation_button_text.selected_hover_outlines = []
+    style.navigation_button_text.insensitive_color = "#64707f"
 
     style.vita_navigation_panel.xsize = 286
     style.vita_navigation_panel.xpadding = 10
@@ -110,18 +164,22 @@ init 900 python:
     style.slot_button_text.size = 34
     style.slot_time_text.size = 32
     style.slot_name_text.size = 34
-    style.slot_button.hover_background = Solid("#b9ddffdd")
-    style.slot_button.selected_idle_background = Solid("#005b9fe8")
-    style.slot_button.selected_hover_background = Solid("#0074c8f0")
-    style.slot_button_text.selected_idle_color = "#ffffff"
-    style.slot_button_text.selected_hover_color = "#ffffff"
+    style.slot_button.hover_background = Solid("#b9ddffd0")
+    style.slot_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "f0")
+    style.slot_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "f2")
+    style.slot_button_text.color = "#23445f"
+    style.slot_button_text.hover_color = VITA_INK_FOCUS
+    style.slot_button_text.selected_idle_color = VITA_SELECTED_TEXT
+    style.slot_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
 
     style.page_button.xpadding = 10
-    style.page_button.hover_background = Solid("#b9ddffdd")
-    style.page_button.selected_idle_background = Solid("#005b9fe8")
-    style.page_button.selected_hover_background = Solid("#0074c8f0")
-    style.page_button_text.selected_idle_color = "#ffffff"
-    style.page_button_text.selected_hover_color = "#ffffff"
+    style.page_button.hover_background = Solid(VITA_FOCUS_FILL + "d0")
+    style.page_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "f0")
+    style.page_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "f2")
+    style.page_button_text.color = VITA_INK
+    style.page_button_text.hover_color = VITA_INK_FOCUS
+    style.page_button_text.selected_idle_color = VITA_SELECTED_TEXT
+    style.page_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
 
     # History is rendered inside the same scaled 4:3 viewport as dialogue.
     # Match its body text to the readable dialogue size and let the viewport
@@ -217,14 +275,53 @@ init 900 python:
     style.mute_all_button_text.size = 34
     for button_style_name in ("radio_button", "check_button", "mute_all_button"):
         button_style = getattr(style, button_style_name)
-        button_style.hover_background = Solid("#d8cef3ff")
-        button_style.selected_idle_background = Solid("#c6e4f7ff")
-        button_style.selected_hover_background = Solid("#cbd4f7ff")
+        # The stock radio/check glyph rasters are transparent when idle and
+        # blue when selected, which vanishes against the active fill. The
+        # button fill and high-contrast text now carry the state instead.
+        button_style.foreground = None
+        button_style.hover_background = Solid(VITA_FOCUS_FILL + "ff")
+        button_style.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
+        button_style.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
     for text_style_name in ("radio_button_text", "check_button_text", "mute_all_button_text"):
         text_style = getattr(style, text_style_name)
-        text_style.hover_color = "#5432a5"
-        text_style.selected_idle_color = "#0067b8"
-        text_style.selected_hover_color = "#253fa3"
+        text_style.color = VITA_INK
+        text_style.hover_color = VITA_INK_FOCUS
+        text_style.selected_idle_color = VITA_SELECTED_TEXT
+        text_style.selected_hover_color = VITA_SELECTED_HOVER_TEXT
+
+    # Speaker names previously rendered straight over game art because
+    # gui/namebox.png ships fully transparent. Put them on the shared light
+    # panel so the dark-blue name always has a predictable background.
+    # "namebox" has no underscore, so unlike derived names it is not
+    # auto-created; the headless precompile run skips it, the real game
+    # always has it registered by screens.rpy.
+    try:
+        style.namebox.background = Solid(VITA_PANEL + "ea")
+    except Exception:
+        pass
+
+    # In-game decision buttons were still desktop-sized (22 px grey text,
+    # blue-on-blue hover). Give them the same readable state language and
+    # sizes as the menus; they float over game art, so their idle fill is
+    # nearly opaque.
+    style.choice_vbox.spacing = 24
+    style.choice_button.xsize = 1000
+    style.choice_button.ysize = 78
+    style.choice_button.background = Solid("#eef4faf2")
+    style.choice_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")
+    style.choice_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
+    style.choice_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
+    style.choice_button_text.size = 40
+    style.choice_button_text.color = "#26303c"
+    style.choice_button_text.hover_color = VITA_INK_FOCUS
+    style.choice_button_text.selected_idle_color = VITA_SELECTED_TEXT
+    style.choice_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
+    style.choice_button_text.insensitive_color = "#5f6a77"
+
+    # Save/notify toasts and the skip indicator were 16 px, which shrinks to
+    # roughly 9 physical pixels on the Vita display.
+    style.notify_text.size = 34
+    style.skip_text.size = 34
 
     # Confirmation prompts are modal on Vita and must remain readable after the
     # 1694x960 canvas is scaled to the physical display.
@@ -235,14 +332,14 @@ init 900 python:
     style.vita_confirm_button.xsize = 260
     style.vita_confirm_button.ysize = 100
     style.vita_confirm_button.background = Solid("#e5e8edff")
-    style.vita_confirm_button.hover_background = Solid("#e9e5f2ff")
-    style.vita_confirm_button.selected_idle_background = Solid("#1468a8ff")
-    style.vita_confirm_button.selected_hover_background = Solid("#4e56a8ff")
+    style.vita_confirm_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")
+    style.vita_confirm_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
+    style.vita_confirm_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
     style.vita_confirm_button_text.size = 40
     style.vita_confirm_button_text.color = "#4f5664"
-    style.vita_confirm_button_text.hover_color = "#5548a5"
-    style.vita_confirm_button_text.selected_idle_color = "#ffffff"
-    style.vita_confirm_button_text.selected_hover_color = "#ffffff"
+    style.vita_confirm_button_text.hover_color = VITA_INK_FOCUS
+    style.vita_confirm_button_text.selected_idle_color = VITA_SELECTED_TEXT
+    style.vita_confirm_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
     style.vita_confirm_button_text.outlines = []
 
     # Keep enough decoded images for nearby scene changes without allowing the
@@ -259,11 +356,17 @@ init 900 python:
     style.vita_side_button.xpadding = 9
     style.vita_side_button.ypadding = 5
     style.vita_side_button.background = Solid("#080808b0")
-    style.vita_side_button.hover_background = Solid("#64324ce6")
+    style.vita_side_button.hover_background = Solid("#1565c0e6")
+    # Toggle buttons on the sidebar (Auto, Skip) show their active state with
+    # the shared solid-blue selected fill.
+    style.vita_side_button.selected_idle_background = Solid("#0d47a1f0")
+    style.vita_side_button.selected_hover_background = Solid("#1565c0f0")
     style.vita_side_button.keyboard_focus = False
     style.vita_side_button_text.size = 35
     style.vita_side_button_text.color = "#ffffff"
     style.vita_side_button_text.hover_color = "#ffffff"
+    style.vita_side_button_text.selected_idle_color = "#ffffff"
+    style.vita_side_button_text.selected_hover_color = "#ffffff"
     style.vita_side_button_text.outlines = [(2, "#000000ee", 0, 0)]
     style.vita_side_button_text.text_align = 0.5
     style.vita_side_button_text.xalign = 0.5
@@ -300,18 +403,18 @@ screen navigation():
             if main_menu:
                 textbutton "Start" action Start()
             else:
-                textbutton "History" action ShowMenu("history")
-                textbutton "Save" action ShowMenu("save")
+                textbutton "History" action ShowMenu("history") selected renpy.get_screen("history") is not None
+                textbutton "Save" action ShowMenu("save") selected renpy.get_screen("save") is not None
 
-            textbutton "Load" action ShowMenu("load")
-            textbutton "Preferences" action ShowMenu("preferences")
+            textbutton "Load" action ShowMenu("load") selected renpy.get_screen("load") is not None
+            textbutton "Preferences" action ShowMenu("preferences") selected renpy.get_screen("preferences") is not None
 
             if _in_replay:
                 textbutton "End Replay" action EndReplay(confirm=True)
             elif not main_menu:
                 textbutton "Main Menu" action MainMenu()
 
-            textbutton "About" action ShowMenu("about")
+            textbutton "About" action ShowMenu("about") selected renpy.get_screen("about") is not None
 
 
 # Do not expose the source game's untranslated gui.about value. The port only

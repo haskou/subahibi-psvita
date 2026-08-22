@@ -467,6 +467,10 @@ screen game_menu(title, scroll=None, yinitial=0.0):
 
         action Return()
 
+    # Circle is Back/Return in game menus. The Vita quick-menu override keeps
+    # Circle mapped to Hide while dialogue is active.
+    key "pad_b_press" action Return()
+
     label title
 
     if main_menu:
