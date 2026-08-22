@@ -121,6 +121,10 @@ def main() -> int:
             "config.images_directory = None",
             "config.missing_show = vita_lazy_missing_show",
             "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
+            'VITA_FOCUS_FILL = "#0d47a1"',
+            'VITA_SELECTED_FILL = "#55b8ee"',
+            'VITA_SELECTED_HOVER_TEXT = "#ffffff"',
+            'textbutton "Preferences" action ShowMenu("preferences") selected renpy.get_screen("preferences") is not None',
             "default persistent.vita_side_buttons = True",
             'textbutton "Show Side Buttons" action ToggleField(persistent, "vita_side_buttons")',
             "if quick_menu and persistent.vita_side_buttons:",
@@ -142,6 +146,7 @@ def main() -> int:
             'use file_slots(_("Load"), load_mode=True)',
             "action (FileLoad(slot) if load_mode else FileSave(slot))",
             "default_focus (load_mode and slot == first_used_slot)",
+            'key "pad_b_press" action Return()',
         ),
         errors,
     )

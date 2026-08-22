@@ -234,6 +234,15 @@ def main() -> int:
             elif sha256_file(cache_file) != metadata.get("sha256"):
                 errors.append("precompiled cache hash mismatch: %s" % name)
 
+    python27_zip = staging_files.get("lib/python27.zip")
+    if python27_zip is None:
+        errors.append("staging is missing lib/python27.zip")
+    else:
+        with zipfile.ZipFile(python27_zip) as runtime_zip:
+            loader_member = runtime_zip.read("renpy/loader.pyo")
+        if b"mount_lazy_archives" not in loader_member:
+            errors.append("runtime loader lacks the lazy audio archive patch")
+
     with zipfile.ZipFile(vpk) as archive:
         corrupt = archive.testzip()
         if corrupt:
@@ -338,12 +347,16 @@ def main() -> int:
                 "config.images_directory = None",
                 "config.missing_show = vita_lazy_missing_show",
                 "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
-                'style.navigation_button.hover_background = Solid("#d8cef3ff")',
-                'style.navigation_button.selected_idle_background = Solid("#c6e4f7ff")',
-                'style.navigation_button.selected_hover_background = Solid("#cbd4f7ff")',
-                'style.navigation_button_text.hover_color = "#5432a5"',
-                'style.navigation_button_text.selected_idle_color = "#0067b8"',
-                'text_style.selected_idle_color = "#0067b8"',
+                'VITA_FOCUS_FILL = "#0d47a1"',
+                'VITA_SELECTED_FILL = "#55b8ee"',
+                'VITA_SELECTED_HOVER_TEXT = "#ffffff"',
+                'style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")',
+                'style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")',
+                'style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")',
+                'style.navigation_button_text.hover_color = VITA_INK_FOCUS',
+                'style.navigation_button_text.selected_idle_color = VITA_SELECTED_TEXT',
+                'style.navigation_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT',
+                'text_style.selected_idle_color = VITA_SELECTED_TEXT',
                 'style.vita_navigation_panel.background = Solid("#f7f9fbb8")',
                 "config.reload_menu = False",
                 "style.history_text.size = 40",
@@ -361,8 +374,8 @@ def main() -> int:
                 "style.vita_side_button.xsize = 190",
                 "style.vita_side_button.keyboard_focus = False",
                 "style.vita_confirm_prompt_text.size = 44",
-                'style.vita_confirm_button.selected_idle_background = Solid("#1468a8ff")',
-                'style.vita_confirm_button.selected_hover_background = Solid("#4e56a8ff")',
+                'style.vita_confirm_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")',
+                'style.vita_confirm_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")',
             ):
                 if marker not in overlay_text:
                     errors.append("Vita UI marker is missing: %s" % marker)
