@@ -65,9 +65,10 @@ The build:
 5. converts story chapters to Ren'Py modules loaded only when entered;
 6. generates the Vita dialogue-box raster from its editable source asset;
 7. compiles every core source, story module and startup cache with Ren'Py 7.4.9;
-8. packs images and audio into three RPA-3.0 archives;
-9. packages the remaining staging tree with VitaSDK;
-10. validates the VPK, RPA coverage, hashes, title metadata and staging parity.
+8. patches the copied Python loader to defer external audio RPA indexing;
+9. packs images and audio into three RPA-3.0 archives;
+10. packages the remaining staging tree with VitaSDK;
+11. validates the VPK, RPA coverage, hashes, title metadata and staging parity.
 
 Run static tooling checks with:
 

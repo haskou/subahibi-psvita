@@ -65,7 +65,7 @@ Outputs are written to `build/dist/`. See
 | Input | Action |
 |---|---|
 | Cross / D-pad Down | Advance or confirm |
-| Circle | Hide interface |
+| Circle | Hide interface during dialogue; return in menus |
 | Triangle | History |
 | Square | Auto mode |
 | L | Rollback |
@@ -81,23 +81,26 @@ because the upstream runtime crashes while shutting down.
 
 ## Startup time
 
-On PS Vita hardware, a cold launch currently takes approximately 27 seconds
-before renderer initialization. This is expected to be similar on subsequent
-launches because most of the work is repeated for every new process rather
-than generated only on first use.
+The instrumented phases of a real Vita launch on 22 August 2026 took
+approximately 19–20 seconds before GLES renderer initialization. Most of this
+work is repeated for every new process, so later launches are not expected to
+be instant.
 
-Measured on 21 August 2026, the main startup costs were approximately 6.0
-seconds to index the three RPA archives, 4.5 seconds to initialize Ren'Py's
-generic error handling, 4.1 seconds to load the core scripts, and 3.0 seconds
-to analyze and prepare screens. Python/Ren'Py bootstrap, garbage collection,
-translation initialization and renderer creation account for the remainder.
+The largest measured phases were 4.76 seconds to load the core scripts, 3.67
+seconds to initialize Ren'Py's generic error handling, 2.64 seconds for the
+Python/Ren'Py bootstrap and early initialization, and 2.08 seconds for loader
+initialization. Translation, screen preparation, garbage collection and the
+remaining phases account for the rest.
 
 The port disables Ren'Py's automatic startup registration of all 33,435 audio
 files and 4,908 images. Audio already uses explicit paths, while images are
 resolved from the RPA index when first shown. This reduced `Running init code`
-from 9.13 seconds to 0.83 seconds without changing the media archives. Further
-large reductions would require changing Ren'Py's RPA loader or the prebuilt
-RenPy-Vita runtime.
+from 9.13 seconds to 0.86 seconds without changing the media archives.
+
+The Vita runtime copy also defers indexing the two external audio RPA files
+until the first audio lookup. This reduced `Loader init` from approximately
+6.03 seconds to 2.08 seconds. The archives and precompiled `eboot.bin` remain
+unchanged; only the copied Python loader inside the generated VPK is patched.
 
 ## Repository layout
 
