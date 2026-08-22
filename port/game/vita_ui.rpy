@@ -51,18 +51,17 @@ init 900 python:
     # --- Vita menu palette (white / blue) -----------------------------------
     # One state language shared by every light menu surface:
     #   idle      dark ink text, no fill
-    #   focus     dark-blue fill + white text (hover AND d-pad focus)
-    #   selected  bright-blue fill + dark-navy text (the active item)
-    #   both      medium-blue fill + white text
-    # The large luminance change makes focus visible on the Vita screen even
-    # when glare or the textured menu artwork reduces subtle colour differences.
+    #   focus     dark-blue bold, underlined text
+    #   selected  blue bold text (the active item)
+    #   both      darker-blue bold, underlined text
+    # Text always remains dark enough for the real white menu surface.
     VITA_INK = "#3d4654"
-    VITA_INK_FOCUS = "#ffffff"
-    VITA_FOCUS_FILL = "#0d47a1"
-    VITA_SELECTED_FILL = "#55b8ee"
-    VITA_SELECTED_FILL_HOVER = "#1565c0"
-    VITA_SELECTED_TEXT = "#0b2a44"
-    VITA_SELECTED_HOVER_TEXT = "#ffffff"
+    VITA_INK_FOCUS = "#003b73"
+    VITA_FOCUS_FILL = "#c7e8ff"
+    VITA_SELECTED_FILL = "#8fd3f4"
+    VITA_SELECTED_FILL_HOVER = "#72c3ed"
+    VITA_SELECTED_TEXT = "#004b80"
+    VITA_SELECTED_HOVER_TEXT = "#002c5c"
     VITA_PANEL = "#f7f9fb"
 
     def vita_contrast(fg, bg):
@@ -92,7 +91,7 @@ init 900 python:
         (VITA_SELECTED_HOVER_TEXT, VITA_SELECTED_FILL_HOVER),
         ("#26303c", "#eef4fa"),
         ("#23445f", "#bcdcff"),
-        ("#ffffff", "#0d47a1"),
+        (VITA_INK_FOCUS, VITA_PANEL),
     ):
         if vita_contrast(vita_fg, vita_bg) < 4.5:
             raise Exception(
@@ -127,15 +126,20 @@ init 900 python:
     style.navigation_button.xpadding = 18
     style.navigation_button.ypadding = 5
     style.navigation_button.background = Solid("#00000000")
-    style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")
-    style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
-    style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
+    style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "80")
+    style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "80")
+    style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "90")
     style.navigation_button_text.color = VITA_INK
     style.navigation_button_text.hover_color = VITA_INK_FOCUS
+    style.navigation_button_text.hover_bold = True
+    style.navigation_button_text.hover_underline = True
     style.navigation_button_text.hover_outlines = []
     style.navigation_button_text.selected_idle_color = VITA_SELECTED_TEXT
+    style.navigation_button_text.selected_idle_bold = True
     style.navigation_button_text.selected_idle_outlines = []
     style.navigation_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
+    style.navigation_button_text.selected_hover_bold = True
+    style.navigation_button_text.selected_hover_underline = True
     style.navigation_button_text.selected_hover_outlines = []
     style.navigation_button_text.insensitive_color = "#64707f"
 
@@ -279,15 +283,20 @@ init 900 python:
         # blue when selected, which vanishes against the active fill. The
         # button fill and high-contrast text now carry the state instead.
         button_style.foreground = None
-        button_style.hover_background = Solid(VITA_FOCUS_FILL + "ff")
-        button_style.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
-        button_style.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
+        button_style.hover_background = Solid(VITA_FOCUS_FILL + "80")
+        button_style.selected_idle_background = Solid(VITA_SELECTED_FILL + "80")
+        button_style.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "90")
     for text_style_name in ("radio_button_text", "check_button_text", "mute_all_button_text"):
         text_style = getattr(style, text_style_name)
         text_style.color = VITA_INK
         text_style.hover_color = VITA_INK_FOCUS
+        text_style.hover_bold = True
+        text_style.hover_underline = True
         text_style.selected_idle_color = VITA_SELECTED_TEXT
+        text_style.selected_idle_bold = True
         text_style.selected_hover_color = VITA_SELECTED_HOVER_TEXT
+        text_style.selected_hover_bold = True
+        text_style.selected_hover_underline = True
 
     # Speaker names previously rendered straight over game art because
     # gui/namebox.png ships fully transparent. Put them on the shared light
