@@ -31,6 +31,7 @@ def main() -> int:
     run("tools/prepare_vita_staging.py", "--clean")
     run("tools/precompile_vita_payload.py")
     run("tools/patch_runtime_no_nvdrs.py")
+    run("tools/patch_runtime_lazy_audio.py")
     run("tools/build_media_archives.py", "--remove-source")
     run("tools/build_vpk.py", "--force")
     run("tools/validate_vpk.py")
