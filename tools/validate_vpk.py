@@ -448,7 +448,7 @@ def main() -> int:
             errors.append("TITLE_ID mismatch: %r" % sfo.get("TITLE_ID"))
         if sfo.get("TITLE") != EXPECTED_TITLE:
             errors.append("TITLE mismatch: %r" % sfo.get("TITLE"))
-        if sfo.get("APP_VER") != "01.06":
+        if sfo.get("APP_VER") != "01.00":
             errors.append("APP_VER mismatch: %r" % sfo.get("APP_VER"))
         if sfo.get("ATTRIBUTE2") != 12:
             errors.append("ATTRIBUTE2 mismatch: %r" % sfo.get("ATTRIBUTE2"))

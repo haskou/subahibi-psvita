@@ -24,7 +24,7 @@ define gui.show_name = True
 
 
 
-define config.version = "1.0.6"
+define config.version = "1.0.0"
 
 
 
