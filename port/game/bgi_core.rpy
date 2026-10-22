@@ -192,9 +192,7 @@ init python:
         pass
 
     def bgi_add():
-        text = text.replace('}', '}}')
         p1 = bgi_stack.pop()
-        text = text.replace(']', ']]')
         p2 = bgi_stack.pop()
         bgi_stack.append(p1 + p2)
 
@@ -315,6 +313,7 @@ init python:
         bgi_stack.append(0)
 
     def bgi_renpy_text_refine(text):
+        text = text.replace('%', '%%')
         text = text.replace('{', '{{')
         text = text.replace('[', '[[')
         return text
@@ -334,7 +333,7 @@ init python:
         p2 = bgi_stack.pop()
         p1 = bgi_stack.pop()
 
-        p5 = bgi_renpy_text_f14b(p5)
+        p5 = bgi_renpy_text_f14b(bgi_renpy_text_refine(p5))
 
         if bgi_nvl_mode == 0:
             if p4 != 0:
