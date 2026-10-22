@@ -11,31 +11,36 @@ import struct
 import sys
 from pathlib import Path
 
+from scale_vita_images import SIZES_NAME, scaled
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GAME = PROJECT_ROOT / "build/game"
 REQUIRED_FILES = {
     "script.rpy", "options.rpy", "gui.rpy", "screens.rpy",
     "bgi_core.rpy", "bgi_func.rpy", "makerlogo.rpym", "main.rpym",
     "1-1_0710_dream.rpym", "vita_ui.rpy", "vita_renderer.rpy",
-    "vita_lazy_modules.rpy",
-    "SourceHanSansLite.ttf", "simhei.ttf", "gui/main_menu.png",
+    "vita_lazy_modules.rpy", SIZES_NAME,
+    "simhei.ttf", "gui/main_menu.webp",
     "images/logo1.webp", "images/SGScSlct990000.webp",
     "audio/bgm003.ogg", "audio/bgm019.ogg",
 }
 CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
+def read_file(path: Path, digest_content: bool) -> tuple[bytes, str | None]:
+    """Return the file header and, if requested, its SHA-256 in one pass."""
     with path.open("rb") as stream:
+        header = stream.read(32)
+        if not digest_content:
+            return header, None
+        digest = hashlib.sha256(header)
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    return header, digest.hexdigest()
 
 
-def valid_magic(path: Path) -> bool:
-    header = path.read_bytes()[:16]
-    suffix = path.suffix.casefold()
+def valid_magic(header: bytes, suffix: str) -> bool:
+    suffix = suffix.casefold()
     if suffix == ".webp":
         return header.startswith(b"RIFF") and header[8:12] == b"WEBP"
     if suffix == ".ogg":
@@ -47,11 +52,39 @@ def valid_magic(path: Path) -> bool:
     return True
 
 
-def png_dimensions(path: Path) -> tuple[int, int]:
-    data = path.read_bytes()[:24]
-    if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+def png_dimensions(header: bytes, path: Path) -> tuple[int, int]:
+    if len(header) < 24 or not header.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("invalid PNG: %s" % path)
-    return struct.unpack(">II", data[16:24])
+    return struct.unpack(">II", header[16:24])
+
+
+def webp_dimensions(header: bytes) -> tuple[int, int] | None:
+    kind = header[12:16]
+    if kind == b"VP8 " and len(header) >= 30:
+        width, height = struct.unpack_from("<HH", header, 26)
+        return width & 0x3FFF, height & 0x3FFF
+    if kind == b"VP8L" and len(header) >= 25:
+        bits = int.from_bytes(header[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if kind == b"VP8X" and len(header) >= 30:
+        return (
+            int.from_bytes(header[24:27], "little") + 1,
+            int.from_bytes(header[27:30], "little") + 1,
+        )
+    return None
+
+
+def read_image_sizes(path: Path | None, errors: list[str]) -> dict[str, tuple[int, int]]:
+    if path is None:
+        return {}
+    sizes = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        fields = line.split("\t")
+        if len(fields) != 3 or not fields[1].isdigit() or not fields[2].isdigit():
+            errors.append("malformed %s line %d" % (SIZES_NAME, number))
+            continue
+        sizes[fields[0]] = (int(fields[1]), int(fields[2]))
+    return sizes
 
 
 def require_text(path: Path, values: tuple[str, ...], errors: list[str]) -> None:
@@ -121,14 +154,17 @@ def main() -> int:
             "config.images_directory = None",
             "config.missing_show = vita_lazy_missing_show",
             "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
-            'VITA_INK_FOCUS = "#003b73"',
-            'VITA_FOCUS_FILL = "#c7e8ff"',
+            "renpy.display.im.Image(filename), size=vita_image_size(image_name)",
             'VITA_SELECTED_FILL = "#8fd3f4"',
             'VITA_SELECTED_HOVER_TEXT = "#002c5c"',
-            'textbutton "Preferences" action ShowMenu("preferences") selected renpy.get_screen("preferences") is not None',
             "default persistent.vita_side_buttons = True",
             'textbutton "Show Side Buttons" action ToggleField(persistent, "vita_side_buttons")',
             "if quick_menu and persistent.vita_side_buttons:",
+            "config.change_language_callbacks.append(vita_menu_styles)",
+            'restyle("game_menu_viewport", keyboard_focus=False)',
+            "renpy.display.behavior.Bar.event = vita_bar_event_direct",
+            '"_call_splashscreen_1" in renpy.get_return_stack()',
+            "config.label_callback = vita_label_callback",
         ),
         errors,
     )
@@ -146,7 +182,6 @@ def main() -> int:
         (
             'use file_slots(_("Load"), load_mode=True)',
             "action (FileLoad(slot) if load_mode else FileSave(slot))",
-            "default_focus (load_mode and slot == first_used_slot)",
             'key "pad_b_press" action Return()',
         ),
         errors,
@@ -164,18 +199,24 @@ def main() -> int:
     if "ImageDissolve(bgi_imdis" in (game / "bgi_func.rpy").read_text(encoding="utf-8"):
         errors.append("expensive BGI ImageDissolve remains in source")
 
-    textbox = actual_files.get("gui/textbox.png")
     ui_assets_path = game.parent / "VITA_UI_ASSETS.json"
     if not ui_assets_path.is_file():
         errors.append("Vita UI-assets report is missing")
-    elif textbox is None:
-        errors.append("Vita textbox asset is missing")
     else:
-        ui_assets = json.loads(ui_assets_path.read_text(encoding="utf-8"))
-        if png_dimensions(textbox) != (1280, 320):
-            errors.append("Vita textbox dimensions are not 1280x320")
-        if sha256(textbox) != ui_assets.get("output_sha256"):
-            errors.append("Vita textbox does not match UI-assets report")
+        ui_assets = json.loads(ui_assets_path.read_text(encoding="utf-8")).get("assets", {})
+        for relative, dimensions, measure in (
+            ("gui/textbox.png", (1280, 320), lambda header, path: png_dimensions(header, path)),
+            ("gui/main_menu.webp", (725, 544), lambda header, path: webp_dimensions(header)),
+        ):
+            asset = actual_files.get(relative)
+            if asset is None:
+                errors.append("Vita UI asset is missing: %s" % relative)
+                continue
+            header, digest = read_file(asset, True)
+            if measure(header, asset) != dimensions:
+                errors.append("Vita UI asset is not %dx%d: %s" % (dimensions + (relative,)))
+            if digest != ui_assets.get(relative, {}).get("output_sha256"):
+                errors.append("Vita UI asset does not match UI-assets report: %s" % relative)
 
     if set(actual_files) != set(expected_files):
         missing = sorted(set(expected_files) - set(actual_files))
@@ -185,19 +226,32 @@ def main() -> int:
         if extra:
             errors.append("unmanifested files present: %s" % ", ".join(extra))
 
+    image_sizes = read_image_sizes(actual_files.get(SIZES_NAME), errors)
     for relative, path in sorted(actual_files.items()):
         if any(part.startswith("x-") for part in Path(relative).parts):
             errors.append("unrestored x- path: %s" % relative)
         if relative.startswith(("cache/", "tl/")):
             errors.append("generated/runtime directory copied: %s" % relative)
-        if not valid_magic(path):
-            errors.append("unexpected file signature: %s" % relative)
         entry = expected_files.get(relative)
+        size_matches = entry is not None and path.stat().st_size == entry["size"]
+        header, digest = read_file(path, size_matches)
+        if not valid_magic(header, path.suffix):
+            errors.append("unexpected file signature: %s" % relative)
         if entry:
-            if path.stat().st_size != entry["size"]:
+            if not size_matches:
                 errors.append("size mismatch: %s" % relative)
-            elif sha256(path) != entry["sha256"]:
+            elif digest != entry["sha256"]:
                 errors.append("SHA-256 mismatch: %s" % relative)
+        if relative.startswith("images/"):
+            original = image_sizes.pop(Path(relative).stem.lower(), None)
+            if original is None:
+                errors.append("image is missing from %s: %s" % (SIZES_NAME, relative))
+            elif webp_dimensions(header) != (scaled(original[0]), scaled(original[1])):
+                errors.append("image is not scaled to the Vita display: %s" % relative)
+    if image_sizes:
+        errors.append(
+            "%s lists missing images: %s" % (SIZES_NAME, ", ".join(sorted(image_sizes)))
+        )
 
     if len(actual_files) != manifest["file_count"]:
         errors.append("file_count mismatch")

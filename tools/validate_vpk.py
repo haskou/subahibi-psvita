@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import pickle
 import pickletools
 import struct
 import sys
@@ -47,6 +48,7 @@ REQUIRED_FILES = {
     "game/cache/bytecode.rpyb",
     "game/cache/pyanalysis.rpyb",
     "game/cache/screens.rpyb",
+    "game/vita_image_sizes.txt",
 } | REQUIRED_MODULES
 FORBIDDEN_RUNTIME_TRANSLATION_FILES = {
     "game/vita_translation.rpy",
@@ -73,6 +75,25 @@ def sha256_stream(stream: BinaryIO) -> str:
 def sha256_file(path: Path) -> str:
     with path.open("rb") as stream:
         return sha256_stream(stream)
+
+
+def rpa_index_names(path: Path) -> list[str]:
+    with path.open("rb") as stream:
+        fields = stream.readline().split()
+        if len(fields) != 3 or fields[0] != b"RPA-3.0":
+            raise ValueError("not an RPA-3.0 archive")
+        stream.seek(int(fields[1], 16))
+        index = pickle.loads(zlib.decompress(stream.read()))
+    return [name.decode("utf-8") for name in index]
+
+
+def same_content(first: BinaryIO, second: BinaryIO) -> bool:
+    while True:
+        chunk = first.read(1024 * 1024)
+        if chunk != second.read(len(chunk) or 1):
+            return False
+        if not chunk:
+            return True
 
 
 def parse_sfo(data: bytes) -> dict[str, object]:
@@ -187,6 +208,21 @@ def main() -> int:
                 errors.append("media archive is missing: %s" % item["name"])
             elif archive_path.stat().st_size != item["size"] or sha256_file(archive_path) != item["sha256"]:
                 errors.append("media archive does not match report: %s" % item["name"])
+        image_archive = vpk.parent / "Subahibi-images.rpa"
+        size_table = staging_files.get("game/vita_image_sizes.txt")
+        if image_archive.is_file() and size_table is not None:
+            try:
+                archived = {
+                    PurePosixPath(name).stem.lower() for name in rpa_index_names(image_archive)
+                }
+                listed = {
+                    line.split("\t", 1)[0]
+                    for line in size_table.read_text(encoding="utf-8").splitlines()
+                }
+                if archived != listed:
+                    errors.append("Vita image size table does not match the image archive")
+            except (ValueError, zlib.error, pickle.UnpicklingError, UnicodeDecodeError) as error:
+                errors.append("cannot inspect the image archive index: %s" % error)
 
     if not args.game_manifest.is_file():
         errors.append("game manifest is missing: %s" % args.game_manifest)
@@ -218,8 +254,12 @@ def main() -> int:
                     precompile.get("source_less_game_rpyc_preserved"),
                 )
             )
+        pruned_common = set(precompile.get("pruned_common_modules", []))
         for relative in precompile.get("generated_common_compiled", []):
-            if "renpy/common/" + relative not in staging_files:
+            present = "renpy/common/" + relative in staging_files
+            if relative in pruned_common and present:
+                errors.append("pruned common module is still staged: %s" % relative)
+            elif relative not in pruned_common and not present:
                 errors.append("precompiled common is missing: %s" % relative)
         for relative in precompile.get("generated_game_compiled", []):
             if "game/" + relative not in staging_files:
@@ -239,14 +279,19 @@ def main() -> int:
         errors.append("staging is missing lib/python27.zip")
     else:
         with zipfile.ZipFile(python27_zip) as runtime_zip:
+            core_member = runtime_zip.read("renpy/display/core.pyo")
             loader_member = runtime_zip.read("renpy/loader.pyo")
+            script_member = runtime_zip.read("renpy/script.pyo")
+        if b"vita" not in core_member:
+            errors.append("runtime core is not the Vita build")
+        if b"cdll" in core_member:
+            errors.append("runtime core still probes the desktop NVDRS driver")
         if b"mount_lazy_archives" not in loader_member:
             errors.append("runtime loader lacks the lazy audio archive patch")
+        if b"cache/bytecode-%s.rpyb" not in script_member:
+            errors.append("runtime script lacks the per-module bytecode cache patch")
 
     with zipfile.ZipFile(vpk) as archive:
-        corrupt = archive.testzip()
-        if corrupt:
-            errors.append("ZIP CRC failure: %s" % corrupt)
         members = [info for info in archive.infolist() if not info.is_dir()]
         names = [info.filename for info in members]
         duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
@@ -293,6 +338,14 @@ def main() -> int:
             )
         if "game/2_0716.rpyc" in archive_names:
             errors.append("2_0716 is monolithic RPYC instead of a lazy RPYMC module")
+        missing_module_cache = sorted(
+            name for name in lazy_modules
+            if "game/cache/bytecode-%s.rpyb" % PurePosixPath(name).stem not in archive_names
+        )
+        if missing_module_cache:
+            errors.append(
+                "lazy module bytecode caches missing: %s" % ", ".join(missing_module_cache)
+            )
 
         try:
             launcher = archive.read("renpy.py").decode("utf-8")
@@ -338,7 +391,6 @@ def main() -> int:
                 if token not in overlay_tokens:
                     errors.append("Vita UI token is missing: %s" % token)
             for marker in (
-                "style.slot_time_text.size = 32",
                 "config.thumbnail_width = 256",
                 "config.thumbnail_height = 144",
                 "config.predict_screens = False",
@@ -347,19 +399,8 @@ def main() -> int:
                 "config.images_directory = None",
                 "config.missing_show = vita_lazy_missing_show",
                 "renpy.display.image.ImageReference.find_target = vita_lazy_find_image_reference",
-                'VITA_INK_FOCUS = "#003b73"',
-                'VITA_FOCUS_FILL = "#c7e8ff"',
                 'VITA_SELECTED_FILL = "#8fd3f4"',
                 'VITA_SELECTED_HOVER_TEXT = "#002c5c"',
-                'style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "80")',
-                'style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "80")',
-                'style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "90")',
-                'style.navigation_button_text.hover_color = VITA_INK_FOCUS',
-                'style.navigation_button_text.hover_underline = True',
-                'style.navigation_button_text.selected_idle_color = VITA_SELECTED_TEXT',
-                'style.navigation_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT',
-                'text_style.selected_idle_color = VITA_SELECTED_TEXT',
-                'style.vita_navigation_panel.background = Solid("#f7f9fbb8")',
                 "config.reload_menu = False",
                 "style.history_text.size = 40",
                 "config.intra_transition = None",
@@ -375,9 +416,11 @@ def main() -> int:
                 'config.top_layers.append("vita_overlay")',
                 "style.vita_side_button.xsize = 190",
                 "style.vita_side_button.keyboard_focus = False",
-                "style.vita_confirm_prompt_text.size = 44",
-                'style.vita_confirm_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")',
-                'style.vita_confirm_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")',
+                "config.change_language_callbacks.append(vita_menu_styles)",
+                'restyle("game_menu_viewport", keyboard_focus=False)',
+                "renpy.display.behavior.Bar.event = vita_bar_event_direct",
+                '"_call_splashscreen_1" in renpy.get_return_stack()',
+                "config.label_callback = vita_label_callback",
             ):
                 if marker not in overlay_text:
                     errors.append("Vita UI marker is missing: %s" % marker)
@@ -437,9 +480,13 @@ def main() -> int:
             if info.file_size != source.stat().st_size:
                 errors.append("size mismatch: %s" % info.filename)
                 continue
-            with archive.open(info) as stream:
-                if sha256_stream(stream) != sha256_file(source):
-                    errors.append("content mismatch: %s" % info.filename)
+            # Reading every member to EOF also verifies its ZIP CRC.
+            try:
+                with archive.open(info) as stream, source.open("rb") as expected:
+                    if not same_content(stream, expected):
+                        errors.append("content mismatch: %s" % info.filename)
+            except zipfile.BadZipFile as error:
+                errors.append("ZIP CRC failure: %s: %s" % (info.filename, error))
 
         try:
             sfo = parse_sfo(archive.read("sce_sys/param.sfo"))

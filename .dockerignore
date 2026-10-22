@@ -1,9 +1,5 @@
-.git
-.venv
-build
-local
-vendor
-*.vpk
-*.psp2dmp
-__pycache__
-*.pyc
+# The image only needs the tool requirements and the docker/ scripts; the
+# workspace (including the multi-GB media bundles) is bind-mounted at run time.
+*
+!requirements-tools.txt
+!docker/

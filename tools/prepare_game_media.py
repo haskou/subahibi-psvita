@@ -21,12 +21,11 @@ DEFAULT_OUTPUT = PROJECT_ROOT / "local/prepared-game"
 MARKER = ".prepared-game.json"
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def fingerprint(path: Path) -> dict[str, int]:
+    # The archives are 2.2 GB; size plus mtime detects a new LFS checkout
+    # without reading them on every build.
+    status = path.stat()
+    return {"size": status.st_size, "mtime_ns": status.st_mtime_ns}
 
 
 def tree_sha256(root: Path) -> str:
@@ -50,9 +49,7 @@ def inventory(game: Path) -> dict[str, int]:
 
 
 def safe_extract(bundle: zipfile.ZipFile, destination: Path) -> None:
-    corrupt = bundle.testzip()
-    if corrupt:
-        raise ValueError("corrupt archive entry: %s" % corrupt)
+    # Reading each member to EOF verifies its CRC, so no separate testzip pass.
     for info in bundle.infolist():
         relative = PurePosixPath(info.filename)
         if info.is_dir():
@@ -78,13 +75,13 @@ def main() -> int:
         missing.append(str(args.sources))
     if missing:
         raise FileNotFoundError("missing game archive(s): %s" % ", ".join(missing))
-    hashes = {path.name: sha256(path) for path in archives}
-    hashes["port/game"] = tree_sha256(args.sources)
+    inputs = {path.name: fingerprint(path) for path in archives}
+    inputs["port/game"] = tree_sha256(args.sources)
     expected = {"rpy": 132, "audio": 33435, "images": 4908}
     marker = args.output / MARKER
     if marker.is_file():
         state = json.loads(marker.read_text(encoding="utf-8"))
-        if state.get("archives") == hashes and inventory(args.output) == expected:
+        if state.get("archives") == inputs and inventory(args.output) == expected:
             print("game data already prepared")
             return 0
 
@@ -101,7 +98,7 @@ def main() -> int:
         if actual != expected:
             raise ValueError("incomplete prepared game: expected %r, found %r" % (expected, actual))
         (temporary / MARKER).write_text(
-            json.dumps({"format": 1, "archives": hashes}, indent=2) + "\n",
+            json.dumps({"format": 2, "archives": inputs}, indent=2) + "\n",
             encoding="utf-8",
         )
         if args.output.exists():

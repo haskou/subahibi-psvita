@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 from project_paths import PROJECT_ROOT, RENPY_SDK, display_path, renpy_sdk_python
@@ -25,8 +26,23 @@ DEFAULT_SDK = RENPY_SDK
 DEFAULT_REPORT = PROJECT_ROOT / "build/PRECOMPILE_REPORT.json"
 DEFAULT_MODULE_REPORT = PROJECT_ROOT / "build/BGI_MODULE_REPORT.json"
 CACHE_FILES = ("bytecode.rpyb", "pyanalysis.rpyb", "screens.rpyb")
+MODULE_CACHE_PATTERN = "bytecode-%s.rpyb"
 COMPILED_SUFFIXES = {".rpyc", ".rpymc"}
 SCRIPT_NODE_EPOCH = 1700000000
+# Compiled with the rest of renpy/common so that the global statement serials,
+# and therefore existing saves, stay identical, then left out of the payload so
+# the Vita does not load and initialize them on every launch. Nothing that
+# remains references them: the keymap needs only 00console/00director, and
+# 00compat touches MusicRoom only for script versions <= 6.15.7 (game: 7.4.4).
+PRUNED_COMMON_MODULES = (
+    "00achievement.rpyc",
+    "00gallery.rpyc",
+    "00iap.rpyc",
+    "00layeredimage.rpyc",
+    "00musicroom.rpyc",
+    "00themes.rpyc",
+    "00updater.rpyc",
+)
 
 
 def sha256(path: Path) -> str:
@@ -43,6 +59,58 @@ def compiled_files(root: Path) -> dict[str, Path]:
         for path in root.rglob("*")
         if path.is_file() and path.suffix in COMPILED_SUFFIXES
     }
+
+
+def write_runtime_screen_cache(sdk: Path, base: Path, staging: Path, temporary: Path) -> None:
+    """Regenerate screens.rpyb under the script digest the Vita computes.
+
+    Ren'Py discards screens.rpyb unless it starts with renpy.game.script.digest,
+    an MD5 seeded with renpy.version_only and fed the digests of the files it
+    loads. The compile pass loads the BGI module preloader and pruned common
+    modules, and the Vita runtime has no renpy.vc_version module, so it runs as
+    7.4.9.0 instead of the SDK's 7.4.9.<vc_version>. Re-analysing every screen
+    and rewriting the cache then costs the first launch on the device.
+    """
+    with zipfile.ZipFile(staging / "lib/python27.zip") as runtime_library:
+        if any(name.startswith("renpy/vc_version.") for name in runtime_library.namelist()):
+            raise ValueError("Vita runtime ships renpy.vc_version; its version is no longer 7.4.9.0")
+
+    runtime_base = temporary / "runtime-base"
+    runtime_project = temporary / "runtime-project"
+    runtime_base.mkdir()
+    shutil.copy2(base / "renpy.py", runtime_base / "renpy.py")
+    base_renpy = base / "renpy"
+
+    def ignore_runtime(directory: str, names: list[str]) -> set[str]:
+        if Path(directory) == base_renpy:
+            return {name for name in names if name == "common" or name.startswith("vc_version.")}
+        return set()
+
+    shutil.copytree(base_renpy, runtime_base / "renpy", ignore=ignore_runtime)
+    shutil.copytree(staging / "renpy/common", runtime_base / "renpy/common")
+    os.symlink(str(sdk / "lib"), str(runtime_base / "lib"), target_is_directory=True)
+    os.symlink(str(sdk / "module"), str(runtime_base / "module"), target_is_directory=True)
+    shutil.copytree(staging / "game", runtime_project / "game")
+    screen_cache = runtime_project / "game/cache/screens.rpyb"
+    screen_cache.unlink()
+
+    completed = subprocess.run(
+        [str(renpy_sdk_python(sdk)), str(runtime_base / "renpy.py"), str(runtime_project), "quit"],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            "Ren'Py screen cache pass failed (%d):\n%s" % (completed.returncode, completed.stdout)
+        )
+    runtime_log = (runtime_project / "log.txt").read_text(encoding="utf-8")
+    if "Ren'Py 7.4.9.0u\n" not in runtime_log:
+        raise ValueError("screen cache pass did not run as the Vita's Ren'Py 7.4.9.0u")
+    if not screen_cache.is_file():
+        raise ValueError("screen cache pass did not write %s" % screen_cache)
+    shutil.copy2(screen_cache, staging / "game/cache/screens.rpyb")
 
 
 def main() -> int:
@@ -105,10 +173,36 @@ def main() -> int:
             module_report = json.loads(args.module_report.read_text(encoding="utf-8"))
             module_names = sorted(set(module_report.get("module_by_label", {}).values()))
             if module_names:
+                # Keep this a single init block: every compiled node takes a
+                # serial from Ren'Py's global counter, and save compatibility
+                # depends on the serials of the files compiled after it.
+                # Module bytecode is moved out of the startup cache into one
+                # cache per module, read by the patched Vita load_module().
+                # Expressions queued before each load are compiled first so
+                # they stay in the startup cache, as the runtime expects.
                 module_preloader.write_text(
                     "init -2000 python:\n"
-                    + "    for _subahibi_module in %r:\n" % module_names
-                    + "        renpy.load_module(_subahibi_module)\n",
+                    "    def _subahibi_precompile_modules(names):\n"
+                    "        import os\n"
+                    "        import zlib\n"
+                    "        from renpy.compat.pickle import dumps\n"
+                    "        script = renpy.game.script\n"
+                    "        directory = os.path.join(config.gamedir, 'cache')\n"
+                    "        if not os.path.isdir(directory):\n"
+                    "            os.makedirs(directory)\n"
+                    "        for name in names:\n"
+                    "            script.update_bytecode()\n"
+                    "            before = set(script.bytecode_newcache)\n"
+                    "            renpy.load_module(name)\n"
+                    "            entries = { }\n"
+                    "            for key in set(script.bytecode_newcache) - before:\n"
+                    "                entries[key] = script.bytecode_newcache.pop(key)\n"
+                    "            data = (renpy.script.BYTECODE_VERSION, entries)\n"
+                    "            path = os.path.join(directory, %r %% name)\n"
+                    "            with open(path, 'wb') as f:\n"
+                    "                f.write(zlib.compress(dumps(data, 2), 3))\n"
+                    "    _subahibi_precompile_modules(%r)\n"
+                    % (MODULE_CACHE_PATTERN, module_names),
                     encoding="utf-8",
                 )
 
@@ -172,12 +266,23 @@ def main() -> int:
                 % ", ".join(sorted(bad_source_digests))
             )
 
+        unknown_pruned = sorted(set(PRUNED_COMMON_MODULES) - set(generated_common))
+        if unknown_pruned:
+            raise ValueError(
+                "prunable common modules were not compiled: %s" % ", ".join(unknown_pruned)
+            )
+
         cache = project / "game/cache"
-        missing_cache = [name for name in CACHE_FILES if not (cache / name).is_file()]
+        expected_cache = list(CACHE_FILES) + [
+            MODULE_CACHE_PATTERN % name for name in module_names
+        ]
+        missing_cache = [name for name in expected_cache if not (cache / name).is_file()]
         if missing_cache:
             raise ValueError("precompile cache is incomplete: %s" % ", ".join(missing_cache))
 
         for name, source in generated_common.items():
+            if name in PRUNED_COMMON_MODULES:
+                continue
             destination = staging / "renpy/common" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
@@ -204,12 +309,13 @@ def main() -> int:
                 removed_sources.append(source.relative_to(staging).as_posix())
                 source.unlink()
 
+        write_runtime_screen_cache(sdk, base, staging, temporary)
+
+    staged_cache = staging / "game/cache"
     cache_report = {
-        name: {
-            "size": (staging / "game/cache" / name).stat().st_size,
-            "sha256": sha256(staging / "game/cache" / name),
-        }
-        for name in CACHE_FILES
+        path.name: {"size": path.stat().st_size, "sha256": sha256(path)}
+        for path in sorted(staged_cache.iterdir())
+        if path.is_file()
     }
     report = {
         "format": 1,
@@ -221,6 +327,7 @@ def main() -> int:
         "generated_game_compiled": sorted(generated_game),
         "generated_common_compiled_count": len(generated_common),
         "generated_common_compiled": sorted(generated_common),
+        "pruned_common_modules": list(PRUNED_COMMON_MODULES),
         "removed_compiled_sources": sorted(removed_sources),
         "cache": cache_report,
     }
@@ -229,6 +336,7 @@ def main() -> int:
     print("preserved source-less game RPYC/RPYMC: %d" % len(orphan_game))
     print("generated game RPYC/RPYMC: %d" % len(generated_game))
     print("generated common RPYC/RPYMC: %d" % len(generated_common))
+    print("pruned common modules: %d" % len(PRUNED_COMMON_MODULES))
     print("removed compiled source files: %d" % len(removed_sources))
     print("generated cache files: %d" % len(cache_report))
     print("report: %s" % report_path)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Move game media into sub-2-GiB Ren'Py archives distributed beside the VPK."""
+"""Pack game media into sub-2-GiB Ren'Py archives distributed beside the VPK."""
 
 from __future__ import annotations
 
@@ -8,26 +8,20 @@ import hashlib
 import json
 import os
 import pickle
-import shutil
 import zlib
 from pathlib import Path
 
 from project_paths import PROJECT_ROOT
 
 
-DEFAULT_GAME = PROJECT_ROOT / "build/staging/game"
+DEFAULT_GAME = PROJECT_ROOT / "build/game"
 DEFAULT_OUTPUT = PROJECT_ROOT / "build/dist"
 DEFAULT_MAX_BYTES = 950 * 1024 * 1024
 KEY = 0x42424242
 PADDING = b"Made with Ren'Py."
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+HEADER_FORMAT = b"RPA-3.0 %016x %08x\n"
+HEADER_SIZE = len(HEADER_FORMAT % (0, KEY))
+CHUNK_SIZE = 8 * 1024 * 1024
 
 
 def groups(paths: list[Path], maximum: int) -> list[list[Path]]:
@@ -47,31 +41,39 @@ def groups(paths: list[Path], maximum: int) -> list[list[Path]]:
 
 
 def write_rpa(path: Path, game: Path, files: list[Path]) -> dict:
+    """Write the archive in one pass, hashing the bytes as they are written."""
     temporary = path.with_suffix(path.suffix + ".tmp")
     if temporary.exists():
         temporary.unlink()
+    sizes = [source.stat().st_size for source in files]
+    index_offset = HEADER_SIZE + sum(len(PADDING) + size for size in sizes)
     index = {}
+    digest = hashlib.sha256()
     with temporary.open("wb") as output:
-        output.write(b"RPA-3.0 XXXXXXXXXXXXXXXX XXXXXXXX\n")
-        for source in files:
-            name = source.relative_to(game).as_posix()
-            output.write(PADDING)
+        def write(data: bytes) -> None:
+            output.write(data)
+            digest.update(data)
+
+        write(HEADER_FORMAT % (index_offset, KEY))
+        for source, length in zip(files, sizes):
+            write(PADDING)
             offset = output.tell()
-            length = source.stat().st_size
             with source.open("rb") as stream:
-                shutil.copyfileobj(stream, output, 8 * 1024 * 1024)
+                for chunk in iter(lambda: stream.read(CHUNK_SIZE), b""):
+                    write(chunk)
+            if output.tell() - offset != length:
+                raise ValueError("media file changed while archiving: %s" % source)
+            name = source.relative_to(game).as_posix()
             index[name.encode("utf-8")] = [(offset ^ KEY, length ^ KEY, b"")]
-        index_offset = output.tell()
-        output.write(zlib.compress(pickle.dumps(index, protocol=2), 9))
-        output.seek(0)
-        output.write(b"RPA-3.0 %016x %08x\n" % (index_offset, KEY))
+        write(zlib.compress(pickle.dumps(index, protocol=2), 9))
+        size = output.tell()
     os.replace(temporary, path)
-    if path.stat().st_size >= 2**31:
+    if size >= 2**31:
         raise ValueError("media archive exceeds the Vita 2-GiB safety limit: %s" % path)
     return {
         "name": path.name,
-        "size": path.stat().st_size,
-        "sha256": sha256(path),
+        "size": size,
+        "sha256": digest.hexdigest(),
         "file_count": len(files),
     }
 
@@ -81,7 +83,6 @@ def main() -> int:
     parser.add_argument("--game", type=Path, default=DEFAULT_GAME)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
-    parser.add_argument("--remove-source", action="store_true")
     args = parser.parse_args()
     images = sorted((args.game / "images").rglob("*.webp"))
     audio = sorted((args.game / "audio").rglob("*.ogg"))
@@ -112,9 +113,6 @@ def main() -> int:
     (args.output / "MEDIA_ARCHIVES.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
-    if args.remove_source:
-        shutil.rmtree(args.game / "images")
-        shutil.rmtree(args.game / "audio")
     print("media archives: %d" % len(archives))
     return 0
 

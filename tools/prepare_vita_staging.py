@@ -21,6 +21,8 @@ DEFAULT_OUTPUT = PROJECT_ROOT / "build/staging"
 DEFAULT_LIVEAREA = PROJECT_ROOT / "assets/vita-livearea/sce_sys"
 ASSET_PREFIX = "Ren'Py PSVita Distribution Tool/Assets/"
 EXPECTED_ARCHIVE_SHA256 = "74614f39b167a983f7c224c85b832d1a3f2f388c5983ff1cb1620f7e2ea6cbc7"
+# Media ship as external RPA archives packed straight from the game payload.
+MEDIA_DIRECTORIES = frozenset({"images", "audio"})
 
 
 def sha256(path: Path) -> str:
@@ -108,7 +110,12 @@ def main() -> int:
                 with bundle.open(info) as source, target.open("wb") as destination:
                     shutil.copyfileobj(source, destination)
                 runtime_files.append(relative.as_posix())
-        shutil.copytree(game, temporary / "game")
+        game_root = os.fspath(game)
+        shutil.copytree(
+            game,
+            temporary / "game",
+            ignore=lambda directory, names: MEDIA_DIRECTORIES if directory == game_root else (),
+        )
         shutil.copytree(livearea, temporary / "sce_sys")
         renpy_launcher = temporary / "renpy.py"
         launcher_source = renpy_launcher.read_text(encoding="utf-8")

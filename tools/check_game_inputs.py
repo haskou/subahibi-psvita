@@ -16,7 +16,7 @@ REQUIRED_FILES = {
     "script.rpy", "options.rpy", "gui.rpy", "screens.rpy",
     "bgi_core.rpy", "bgi_func.rpy", "makerlogo.rpy", "main.rpy",
     "vita_ui.rpy", "vita_renderer.rpy",
-    "SourceHanSansLite.ttf", "simhei.ttf", "gui/main_menu.png",
+    "simhei.ttf", "gui/main_menu.png",
 }
 CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 

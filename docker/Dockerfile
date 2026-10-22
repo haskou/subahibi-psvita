@@ -1,4 +1,5 @@
-FROM vitasdk/vitasdk:latest
+# Pinned to the multi-arch index digest so rebuilds use the same SDK and tools.
+FROM vitasdk/vitasdk:latest@sha256:8227da1b596d981f4513cd9b36bda1e43857f6dae5bcf4312c1cd40167f7d9bb
 
 USER root
 
@@ -18,7 +19,7 @@ RUN apt-get update \
 
 COPY requirements-tools.txt /tmp/subahibi-requirements.txt
 RUN python3 -m venv /opt/subahibi/venv \
-    && /opt/subahibi/venv/bin/pip install --no-cache-dir \
+    && /opt/subahibi/venv/bin/pip install --no-cache-dir --require-hashes \
         -r /tmp/subahibi-requirements.txt
 
 COPY docker/fetch-vendors.sh /usr/local/bin/fetch-subahibi-vendors

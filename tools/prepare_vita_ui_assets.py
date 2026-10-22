@@ -6,17 +6,34 @@ from __future__ import annotations
 import argparse
 import binascii
 import hashlib
+import io
 import json
+import os
 import struct
 import sys
 import zlib
 from pathlib import Path
 
+from PIL import Image
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TEXTBOX = PROJECT_ROOT / "build/game/gui/textbox.png"
+GAME = PROJECT_ROOT / "build/game"
+TEXTBOX = GAME / "gui/textbox.png"
+MAIN_MENU_SOURCE = GAME / "gui/main_menu.png"
+MAIN_MENU = GAME / "gui/main_menu.webp"
 REPORT = PROJECT_ROOT / "build/VITA_UI_ASSETS.json"
 TARGET_HEIGHT = 320
+# The Vita draws the 1280x960 game rectangle at 725x544 (vita_ui.rpy), which
+# shows the main-menu art at that size; vita_ui.rpy scales it back to 1280x960.
+# The art ships as lossy WebP (scale_vita_images.py settings): the Vita runtime
+# measured 835 ms to decode it as a 725x544 PNG against 57-82 ms for WebP
+# images of the same size.
+MAIN_MENU_SOURCE_SIZE = (1280, 960)
+MAIN_MENU_SIZE = (725, 544)
+MAIN_MENU_QUALITY = 90
+MAIN_MENU_ALPHA_QUALITY = 100
+MAIN_MENU_METHOD = 4
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -138,27 +155,24 @@ def encode_rgba(path: Path, width: int, rows: list[bytes]) -> None:
     path.write_bytes(output)
 
 
-def update_manifest() -> None:
+def update_manifest(assets: dict[Path, Path]) -> None:
+    """Point each source asset's manifest entry at its generated output."""
     path = PROJECT_ROOT / "build/GAME_MANIFEST.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    destination = "game/gui/textbox.png"
-    for entry in manifest["files"]:
-        if entry["destination"] == destination:
-            entry["size"] = TEXTBOX.stat().st_size
-            entry["sha256"] = sha256(TEXTBOX)
-            break
-    else:
-        raise ValueError("textbox is missing from game manifest")
+    entries = {entry["destination"]: entry for entry in manifest["files"]}
+    for source, output in assets.items():
+        destination = "game/%s" % source.relative_to(GAME).as_posix()
+        entry = entries.get(destination)
+        if entry is None:
+            raise ValueError("%s is missing from game manifest" % destination)
+        entry["destination"] = "game/%s" % output.relative_to(GAME).as_posix()
+        entry["size"] = output.stat().st_size
+        entry["sha256"] = sha256(output)
     manifest["total_bytes"] = sum(entry["size"] for entry in manifest["files"])
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate the Vita-specific dialogue-box raster asset."
-    )
-    parser.parse_args()
-
+def prepare_textbox() -> dict[str, object]:
     source_hash = sha256(TEXTBOX)
     width, source_height, rows = decode_rgba(TEXTBOX)
     if width != 1280 or source_height != 185:
@@ -182,11 +196,7 @@ def main() -> int:
     alpha_values = [row[3] for row in output_rows]
     if min(alpha_values) != 0 or max(alpha_values) != 204:
         raise ValueError("generated textbox did not preserve the source alpha range")
-    update_manifest()
-    report = {
-        "format": 1,
-        "mode": "generated-vita-copy",
-        "path": "build/game/gui/textbox.png",
+    return {
         "source_dimensions": [width, source_height],
         "output_dimensions": [output_width, output_height],
         "lateral_fade_removed": True,
@@ -195,8 +205,53 @@ def main() -> int:
         "source_sha256": source_hash,
         "output_sha256": sha256(TEXTBOX),
     }
+
+
+def prepare_main_menu() -> dict[str, object]:
+    source_hash = sha256(MAIN_MENU_SOURCE)
+    with Image.open(MAIN_MENU_SOURCE) as image:
+        image.load()
+        if image.size != MAIN_MENU_SOURCE_SIZE:
+            raise ValueError("unexpected source main-menu dimensions: %dx%d" % image.size)
+        mode = "RGBA" if "A" in image.getbands() else "RGB"
+        resized = image.convert(mode).resize(MAIN_MENU_SIZE, Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    resized.save(
+        buffer,
+        "WEBP",
+        quality=MAIN_MENU_QUALITY,
+        alpha_quality=MAIN_MENU_ALPHA_QUALITY,
+        method=MAIN_MENU_METHOD,
+    )
+    MAIN_MENU.write_bytes(buffer.getvalue())
+    os.remove(MAIN_MENU_SOURCE)
+    return {
+        "source_dimensions": list(MAIN_MENU_SOURCE_SIZE),
+        "output_dimensions": list(MAIN_MENU_SIZE),
+        "source_sha256": source_hash,
+        "output_sha256": sha256(MAIN_MENU),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate the Vita-specific dialogue-box and main-menu raster assets."
+    )
+    parser.parse_args()
+
+    textbox = prepare_textbox()
+    main_menu = prepare_main_menu()
+    update_manifest({TEXTBOX: TEXTBOX, MAIN_MENU_SOURCE: MAIN_MENU})
+    report = {
+        "format": 2,
+        "mode": "generated-vita-copy",
+        "assets": {"gui/textbox.png": textbox, "gui/main_menu.webp": main_menu},
+    }
     REPORT.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print("textbox: %dx%d -> %dx%d" % (width, source_height, output_width, output_height))
+    for name, asset in report["assets"].items():
+        source_width, source_height = asset["source_dimensions"]
+        output_width, output_height = asset["output_dimensions"]
+        print("%s: %dx%d -> %dx%d" % (name, source_width, source_height, output_width, output_height))
     print("report: %s" % REPORT)
     return 0
 

@@ -71,12 +71,17 @@ def canonical_relative_path(source_root: Path, source_file: Path) -> Path:
     return source_file.relative_to(source_root)
 
 
-def sha256(path: Path) -> str:
+def copy_and_hash(source: Path, target: Path) -> tuple[int, str]:
+    """Copy like shutil.copy2, hashing the bytes in the same pass."""
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+    size = 0
+    with source.open("rb") as reader, target.open("wb") as writer:
+        for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+            writer.write(chunk)
             digest.update(chunk)
-    return digest.hexdigest()
+            size += len(chunk)
+    shutil.copystat(source, target)
+    return size, digest.hexdigest()
 
 
 def build_media_index(source_root: Path) -> DefaultDict[str, Set[Path]]:
@@ -151,13 +156,13 @@ def copy_payload(source_root: Path, destination: Path, files: Iterable[Path]) ->
         relative = canonical_relative_path(source_root, source)
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        size, digest = copy_and_hash(source, target)
         manifest_entries.append(
             {
                 "source": str(source.relative_to(PROJECT_ROOT)),
                 "destination": str(Path("game") / relative),
-                "size": target.stat().st_size,
-                "sha256": sha256(target),
+                "size": size,
+                "sha256": digest,
             }
         )
     return manifest_entries

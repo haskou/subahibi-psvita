@@ -8,8 +8,10 @@ import hashlib
 import json
 import re
 import sys
+import textwrap
 from pathlib import Path
 
+from optimize_bgi_scripts import optimize_source
 from project_paths import PROJECT_ROOT
 
 
@@ -19,6 +21,32 @@ DEFAULT_OPTIMIZATION = PROJECT_ROOT / "build/BGI_OPTIMIZATION_REPORT.json"
 DEFAULT_REPORT = PROJECT_ROOT / "build/BGI_MODULE_REPORT.json"
 LAZY_SOURCE = "vita_lazy_modules.rpy"
 LABEL_RE = re.compile(r"^label\s+([A-Za-z0-9_]+)\s*:", re.MULTILINE)
+
+# Ren'Py names script nodes (filename, version, serial): the version is the
+# time the file was compiled and the serial counts the statements compiled
+# before the node. The build pins the version, so its own saves resolve
+# directly. Earlier releases named the nodes of the files below; the statement
+# index (serial - first serial) addresses the same statement of the shipped
+# file. Each row is (save filename, version, shipped file, first serial,
+# statements in the save's layout).
+#
+# The PC release compiled the unoptimized chapters: rows for optimized files
+# translate through the optimizer's statement map.
+PC_RELEASE_LAYOUTS = (
+    ("game/1-1_0710_dream.rpy", 1618583803, "1-1_0710_dream.rpy", 0, 1730),
+    ("game/main.rpy", 1618583894, "main.rpy", 799290, 183),
+    ("game/bgi_func.rpy", 1618583891, "bgi_func.rpy", 774318, 804),
+    ("game/script.rpy", 1618583488, "script.rpy", 740, 33),
+)
+# Vita builds that stamped wall-clock versions compiled the shipped statements
+# but four fewer of them in the vita_*.rpy files, so their module serials are
+# four lower.
+WALL_CLOCK_LAYOUTS = (
+    ("game/1-1_0710_dream.rpym", 1787262624, "1-1_0710_dream.rpy", 2461, 760),
+    ("game/bgi_func.rpy", 1787262624, "bgi_func.rpy", 810, 804),
+    ("game/script.rpy", 1787262624, "script.rpy", 2391, 33),
+    ("game/main.rpym", 1787262652, "main.rpy", 316091, 94),
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +64,50 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def lazy_source(module_by_label: dict[str, str]) -> str:
+def legacy_layouts(game: Path, manifest: dict, renamed: dict[str, str]) -> dict:
+    """Map (save filename, version) to (current filename, first serial,
+    current statements, statement map or None)."""
+
+    sources = {Path(entry["destination"]).name: entry["source"] for entry in manifest["files"]}
+    layouts = {}
+    for save_name, version, shipped, first, statements in WALL_CLOCK_LAYOUTS:
+        current = "game/" + renamed.get(shipped, shipped)
+        layouts[(save_name, version)] = (current, first, statements, None)
+    for save_name, version, shipped, first, statements in PC_RELEASE_LAYOUTS:
+        current = "game/" + renamed.get(shipped, shipped)
+        if shipped not in renamed:
+            layouts[(save_name, version)] = (current, first, statements, None)
+            continue
+        source = PROJECT_ROOT / sources[shipped]
+        optimized, _result, statement_map = optimize_source(source.read_text(encoding="utf-8"))
+        if optimized != (game / renamed[shipped]).read_text(encoding="utf-8"):
+            raise ValueError("%s does not optimize to the shipped %s" % (source, shipped))
+        if statement_map is None or len(statement_map) != statements:
+            raise ValueError("%s no longer has the PC release's statements" % source)
+        current_statements = max(index for index in statement_map if index is not None) + 1
+        layouts[(save_name, version)] = (current, first, current_statements, statement_map)
+    return layouts
+
+
+def layouts_source(layouts: dict) -> str:
+    lines = ["{"]
+    for key, (current, first, statements, statement_map) in sorted(layouts.items()):
+        if statement_map is None:
+            map_source = "None"
+        else:
+            items = textwrap.fill(
+                ", ".join(repr(index) for index in statement_map),
+                width=88,
+                initial_indent=" " * 12,
+                subsequent_indent=" " * 12,
+            )
+            map_source = "[\n%s\n        ]" % items
+        lines.append("        %r: (%r, %d, %d, %s)," % (key, current, first, statements, map_source))
+    lines.append("    }")
+    return "\n".join(lines)
+
+
+def lazy_source(module_by_label: dict[str, str], layouts: dict) -> str:
     mapping = json.dumps(module_by_label, indent=8, sort_keys=True)
     return '''# Generated for the Vita build. The editable BGI sources remain unchanged.
 
@@ -103,41 +174,60 @@ init 1000 python:
 
     _SubahibiFileLoad = FileLoad
 
-    # Ren'Py's anonymous script-node identifiers include the wall-clock time
-    # at which RPYC/RPYMC files were compiled. A clean rebuild therefore makes
-    # otherwise unchanged save files look incompatible. Install aliases for
-    # the identifiers present in a save immediately after it is decoded and
-    # before RollbackLog.unfreeze() validates its execution contexts.
+    # Saves from earlier releases name script nodes of other layouts. Alias
+    # the known ones right after a save is decoded and before
+    # RollbackLog.unfreeze() validates its execution contexts; Ren'Py skips
+    # rollback entries it still cannot resolve. Names of this build are never
+    # aliased.
     _subahibi_original_loads = renpy.loadsave.loads
 
-    def bgi_lazy_alias_saved_node(name, nodes_by_file_serial):
+    # (save filename, version) -> (current filename, first serial, current
+    # statements, statement map or None for the same statement index).
+    bgi_lazy_legacy_layouts = %s
+
+    def bgi_lazy_current_nodes():
+        nodes_by_file = {}
+        for name, node in renpy.game.script.namemap.items():
+            if isinstance(name, tuple) and len(name) == 3 and node.name == name:
+                nodes_by_file.setdefault(name[0], []).append(name)
+        for names in nodes_by_file.values():
+            names.sort(key=lambda name: name[2])
+        return nodes_by_file
+
+    def bgi_lazy_alias_saved_node(name, nodes_by_file):
         if not isinstance(name, tuple) or len(name) != 3:
             return
-        filename, version, serial = name
-        if not isinstance(filename, basestring):
+        layout = bgi_lazy_legacy_layouts.get((name[0], name[1]))
+        if layout is None:
             return
-        current_name = nodes_by_file_serial.get((filename, serial))
-        if current_name is not None:
-            renpy.game.script.namemap[name] = renpy.game.script.namemap[current_name]
+        filename, first_serial, statements, statement_map = layout
+        names = nodes_by_file.get(filename, ())
+        if len(names) != statements:
+            return
+        index = name[2] - first_serial
+        if statement_map is not None:
+            if not 0 <= index < len(statement_map):
+                return
+            index = statement_map[index]
+            if index is None:
+                return
+        if 0 <= index < statements:
+            renpy.game.script.namemap[name] = renpy.game.script.namemap[names[index]]
 
     def bgi_lazy_install_save_aliases(saved_log):
-        nodes_by_file_serial = {}
-        for current_name in renpy.game.script.namemap:
-            if isinstance(current_name, tuple) and len(current_name) == 3:
-                nodes_by_file_serial[(current_name[0], current_name[2])] = current_name
-
+        nodes_by_file = bgi_lazy_current_nodes()
         for rollback in saved_log.log:
             context = rollback.context
-            bgi_lazy_alias_saved_node(context.current, nodes_by_file_serial)
-            bgi_lazy_alias_saved_node(context.come_from_name, nodes_by_file_serial)
+            bgi_lazy_alias_saved_node(context.current, nodes_by_file)
+            bgi_lazy_alias_saved_node(context.come_from_name, nodes_by_file)
             for name in context.call_location_stack:
-                bgi_lazy_alias_saved_node(name, nodes_by_file_serial)
+                bgi_lazy_alias_saved_node(name, nodes_by_file)
             for name in context.return_stack:
-                bgi_lazy_alias_saved_node(name, nodes_by_file_serial)
+                bgi_lazy_alias_saved_node(name, nodes_by_file)
 
-        bgi_lazy_alias_saved_node(saved_log.fixed_rollback_boundary, nodes_by_file_serial)
+        bgi_lazy_alias_saved_node(saved_log.fixed_rollback_boundary, nodes_by_file)
         for name, data in saved_log.forward:
-            bgi_lazy_alias_saved_node(name, nodes_by_file_serial)
+            bgi_lazy_alias_saved_node(name, nodes_by_file)
 
     def bgi_lazy_compatible_loads(data):
         roots, saved_log = _subahibi_original_loads(data)
@@ -228,7 +318,7 @@ init 1000 python:
             return _SubahibiFileLoad.__call__(self)
 
     FileLoad = SubahibiFileLoad
-''' % mapping
+''' % (mapping, layouts_source(layouts))
 
 
 def main() -> int:
@@ -254,10 +344,11 @@ def main() -> int:
         module_by_label[label] = module
         renamed[name] = target.name
 
-    generated = game / LAZY_SOURCE
-    generated.write_text(lazy_source(module_by_label), encoding="utf-8")
-
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    layouts = legacy_layouts(game, manifest, renamed)
+    generated = game / LAZY_SOURCE
+    generated.write_text(lazy_source(module_by_label, layouts), encoding="utf-8")
+
     updated = set()
     for entry in manifest["files"]:
         destination = Path(entry["destination"])
