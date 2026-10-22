@@ -36,7 +36,8 @@ Keep at least 2.3 GB free on `ux0:`.
 
 Do not copy the RPA files into `ux0:app/SHBI00001/game/`. That application
 directory is replaced when a VPK is reinstalled. The port reads media directly
-from `ux0:data/Subahibi/`, so later updates require installing only the new VPK.
+from `ux0:data/Subahibi/`, so an update requires installing only the new VPK
+plus any RPA file whose hash in `SHA256SUMS` differs from the copy on `ux0:`.
 
 If an earlier build already has the archives under
 `ux0:app/SHBI00001/game/`, use VitaShell to **move** all three files to
