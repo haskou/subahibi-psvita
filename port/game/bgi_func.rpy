@@ -136,8 +136,8 @@ init python:
 
 label bgi_f_0a0:
     $ p1 = bgi_stack.pop()
-    $ randnum = renpy.random.randint(0, p1)
-    $ bgi_stack.append(randnum)
+    $ bgi_stack.append(renpy.random.randint(0, p1))
+    return
 
 label bgi_f_0f4:
     $ MainMenu(confirm=False)()
