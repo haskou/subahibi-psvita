@@ -172,7 +172,7 @@ def main() -> int:
         game / "options.rpy",
         (
             'define config.name = _("Subahibi")',
-            'define config.version = "1.0.0"',
+            'define config.version = "1.1.0"',
             "define config.developer = False", "define config.console = False",
         ),
         errors,
