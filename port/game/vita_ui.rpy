@@ -12,6 +12,27 @@ init -1800 python:
     config.audio_directory = None
     config.images_directory = None
 
+    # The build pre-scales every image to the Vita's 544/960 display scale and
+    # records its original size, which is the size the BGI layout code expects.
+    # The table lives on the function, outside the store, so it is neither
+    # saved nor rolled back, and python_dict is the builtin, non-revertable dict.
+    def vita_image_size(name):
+        sizes = vita_image_size.sizes
+        if sizes is None:
+            stream = renpy.file("vita_image_sizes.txt")
+            try:
+                lines = stream.read().decode("utf-8").splitlines()
+            finally:
+                stream.close()
+            sizes = python_dict()
+            for line in lines:
+                image_name, width, height = line.split("\t")
+                sizes[image_name] = (int(width), int(height))
+            vita_image_size.sizes = sizes
+        return sizes[name.lower()]
+
+    vita_image_size.sizes = None
+
     def vita_lazy_image(what):
         if not isinstance(what, tuple):
             return None
@@ -20,7 +41,9 @@ init -1800 python:
         filename = "images/{}.webp".format(image_name)
 
         if renpy.loadable(filename):
-            displayable = renpy.display.im.Image(filename)
+            displayable = Transform(
+                renpy.display.im.Image(filename), size=vita_image_size(image_name)
+            )
             # Registering the displayable also repairs ImageReference objects
             # restored directly from a save, which do not pass through
             # config.missing_show before they are rendered.
@@ -48,21 +71,31 @@ init -1800 python:
 
 
 init 900 python:
+    import threading
+
     # --- Vita menu palette (white / blue) -----------------------------------
-    # One state language shared by every light menu surface:
+    # The menus keep the desktop light template's look: white overlays, the
+    # #0099ff rule and markers, and gui.hover_color text. One state language
+    # is shared by every menu surface:
     #   idle      dark ink text, no fill
-    #   focus     dark-blue bold, underlined text
-    #   selected  blue bold text (the active item)
-    #   both      darker-blue bold, underlined text
-    # Text always remains dark enough for the real white menu surface.
+    #   focus     light-blue fill inside a dark-blue frame; the item the cross
+    #             button activates
+    #   selected  dark-blue bold text plus a blue marker (current screen,
+    #             active option)
+    # Focus never changes text weight, so moving the cursor never reflows a
+    # menu.
+    VITA_ACCENT = "#0099ff"
     VITA_INK = "#3d4654"
-    VITA_INK_FOCUS = "#003b73"
-    VITA_FOCUS_FILL = "#c7e8ff"
+    VITA_INK_FOCUS = "#003366"
+    VITA_FOCUS_FILL = "#d6edff"
+    VITA_FOCUS_RING = "#0066cc"
     VITA_SELECTED_FILL = "#8fd3f4"
     VITA_SELECTED_FILL_HOVER = "#72c3ed"
     VITA_SELECTED_TEXT = "#004b80"
     VITA_SELECTED_HOVER_TEXT = "#002c5c"
     VITA_PANEL = "#f7f9fb"
+    # The stock 90% white overlay composited over the game-menu background.
+    VITA_MENU_SURFACE = "#eff1f2"
 
     def vita_contrast(fg, bg):
         """WCAG 2.x contrast ratio between two opaque #rrggbb colours."""
@@ -81,26 +114,61 @@ init 900 python:
             one, other = other, one
         return (one + 0.05) / (other + 0.05)
 
-    # Every text/background pair used by the menu styles below must pass
-    # WCAG AA (4.5:1). This runs at every boot, so a future colour tweak that
-    # breaks legibility fails loudly instead of shipping unreadable menus.
-    for vita_fg, vita_bg in (
-        (VITA_INK, VITA_PANEL),
-        (VITA_INK_FOCUS, VITA_FOCUS_FILL),
-        (VITA_SELECTED_TEXT, VITA_SELECTED_FILL),
-        (VITA_SELECTED_HOVER_TEXT, VITA_SELECTED_FILL_HOVER),
-        ("#26303c", "#eef4fa"),
-        ("#23445f", "#bcdcff"),
-        (VITA_INK_FOCUS, VITA_PANEL),
+    # Every text/background pair used by the menu styles must pass WCAG AA
+    # (4.5:1), and the focus frame must reach the 3:1 non-text minimum against
+    # everything it borders. This runs at every boot, so a future colour tweak
+    # that breaks legibility fails loudly instead of shipping unreadable menus.
+    for vita_fg, vita_bg, vita_minimum in (
+        (VITA_INK, VITA_MENU_SURFACE, 4.5),
+        (VITA_INK, VITA_PANEL, 4.5),
+        (VITA_INK_FOCUS, VITA_FOCUS_FILL, 4.5),
+        (VITA_INK_FOCUS, VITA_MENU_SURFACE, 4.5),
+        (VITA_INK_FOCUS, VITA_PANEL, 4.5),
+        ("#4f5664", "#e5e8ed", 4.5),
+        (VITA_SELECTED_TEXT, VITA_SELECTED_FILL, 4.5),
+        (VITA_SELECTED_HOVER_TEXT, VITA_SELECTED_FILL_HOVER, 4.5),
+        ("#26303c", "#eef4fa", 4.5),
+        (VITA_FOCUS_RING, VITA_MENU_SURFACE, 3.0),
+        (VITA_FOCUS_RING, VITA_FOCUS_FILL, 3.0),
+        (VITA_FOCUS_RING, "#99d6ff", 3.0),
     ):
-        if vita_contrast(vita_fg, vita_bg) < 4.5:
+        if vita_contrast(vita_fg, vita_bg) < vita_minimum:
             raise Exception(
-                "Vita UI palette fails WCAG AA contrast: {} on {}".format(
+                "Vita UI palette fails WCAG contrast: {} on {}".format(
                     vita_fg, vita_bg
                 )
             )
 
-    style.create("vita_navigation_panel", "empty")
+    def vita_layers(*children):
+        """Stack displayables in a Fixed that fills the area it is given."""
+        rv = Fixed()
+        for child in children:
+            rv.add(child)
+        return rv
+
+    def vita_focus_frame(fill=VITA_FOCUS_FILL, inner=None):
+        """The focus cursor: a fill, an optional inner layer, a 4 px frame."""
+        edge = 4
+        layers = [Solid(fill)]
+        if inner is not None:
+            layers.append(inner)
+        layers.extend((
+            Solid(VITA_FOCUS_RING, ysize=edge),
+            Solid(VITA_FOCUS_RING, ysize=edge, yalign=1.0),
+            Solid(VITA_FOCUS_RING, xsize=edge),
+            Solid(VITA_FOCUS_RING, xsize=edge, xalign=1.0),
+        ))
+        return vita_layers(*layers)
+
+    def vita_selected_marker():
+        """The stock radio marker: a 6x36 accent bar at the left edge."""
+        return vita_layers(
+            Solid(VITA_ACCENT, xpos=4, xsize=6, ysize=36, yalign=0.5)
+        )
+
+    def vita_page_marker():
+        """Selected save page: an accent underline."""
+        return vita_layers(Solid(VITA_ACCENT, ysize=4, yalign=1.0))
 
     # The 1280x960 layout is letterboxed to 725x544 on Vita. Keep the readable
     # 36 px dialogue size, but give longer English lines substantially more
@@ -116,38 +184,6 @@ init 900 python:
     style.say_label.size = 42
     style.nvl_dialogue.size = 38
 
-    # One restrained navigation language is shared by the main menu, game
-    # menus and Return.
-    style.navigation_button_text.font = gui.interface_text_font
-    style.navigation_button_text.size = 38
-    style.navigation_button_text.outlines = []
-    style.navigation_button.xsize = 260
-    style.navigation_button.ysize = 58
-    style.navigation_button.xpadding = 18
-    style.navigation_button.ypadding = 5
-    style.navigation_button.background = Solid("#00000000")
-    style.navigation_button.hover_background = Solid(VITA_FOCUS_FILL + "80")
-    style.navigation_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "80")
-    style.navigation_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "90")
-    style.navigation_button_text.color = VITA_INK
-    style.navigation_button_text.hover_color = VITA_INK_FOCUS
-    style.navigation_button_text.hover_bold = True
-    style.navigation_button_text.hover_underline = True
-    style.navigation_button_text.hover_outlines = []
-    style.navigation_button_text.selected_idle_color = VITA_SELECTED_TEXT
-    style.navigation_button_text.selected_idle_bold = True
-    style.navigation_button_text.selected_idle_outlines = []
-    style.navigation_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
-    style.navigation_button_text.selected_hover_bold = True
-    style.navigation_button_text.selected_hover_underline = True
-    style.navigation_button_text.selected_hover_outlines = []
-    style.navigation_button_text.insensitive_color = "#64707f"
-
-    style.vita_navigation_panel.xsize = 286
-    style.vita_navigation_panel.xpadding = 10
-    style.vita_navigation_panel.ypadding = 14
-    style.vita_navigation_panel.background = Solid("#f7f9fbb8")
-
     # Loading a save must return directly to the saved game state. Reopening
     # the menu that initiated a runtime reload is desktop-oriented behaviour
     # and is confusing on Vita, where it looks as if loading did nothing.
@@ -159,31 +195,6 @@ init 900 python:
     config.thumbnail_width = 256
     config.thumbnail_height = 144
     gui.slot_button_height = 214
-
-    # File-slot text from the desktop layout becomes unreadable after the
-    # 1280x960 interface is scaled to the Vita display.
-    style.game_menu_label_text.size = 48
-    style.page_label_text.size = 38
-    style.page_button_text.size = 36
-    style.slot_button_text.size = 34
-    style.slot_time_text.size = 32
-    style.slot_name_text.size = 34
-    style.slot_button.hover_background = Solid("#b9ddffd0")
-    style.slot_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "f0")
-    style.slot_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "f2")
-    style.slot_button_text.color = "#23445f"
-    style.slot_button_text.hover_color = VITA_INK_FOCUS
-    style.slot_button_text.selected_idle_color = VITA_SELECTED_TEXT
-    style.slot_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
-
-    style.page_button.xpadding = 10
-    style.page_button.hover_background = Solid(VITA_FOCUS_FILL + "d0")
-    style.page_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "f0")
-    style.page_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "f2")
-    style.page_button_text.color = VITA_INK
-    style.page_button_text.hover_color = VITA_INK_FOCUS
-    style.page_button_text.selected_idle_color = VITA_SELECTED_TEXT
-    style.page_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
 
     # History is rendered inside the same scaled 4:3 viewport as dialogue.
     # Match its body text to the readable dialogue size and let the viewport
@@ -207,6 +218,20 @@ init 900 python:
     config.predict_screens = False
     config.predict_file_pages = False
 
+    # The game menu covers the whole game rectangle with an opaque background,
+    # so the scene underneath only costs render time. Hide every game layer
+    # while a menu is open; Ren'Py restores them when the menu closes.
+    config.menu_clear_layers = ["master", "f30x", "f39x", "transient"]
+
+    # The stock game-menu background is a uniform #5f727f raster whose decode
+    # was the largest single cost of opening the menu with START.
+    gui.game_menu_background = Solid("#5f727f")
+
+    # The build stores the main-menu art as a 725x544 lossy WebP, the size the
+    # Vita shows it at. vita_warm_main_menu() decodes it during the splash.
+    VITA_MAIN_MENU_ART = "gui/main_menu.webp"
+    gui.main_menu_background = Transform(VITA_MAIN_MENU_ART, size=(1280, 960))
+
     # Use a fixed 16:9 virtual canvas containing an unscaled 1280x960 game
     # rectangle. Vita then scales the complete 1694x960 canvas to 960x544,
     # making the game 725x544 with 117 px physical pillarboxes. Unlike a layer
@@ -220,6 +245,16 @@ init 900 python:
         config.layer_clipping[layer_name] = (207, 0, 1280, 960)
     if "vita_sidebar" not in config.overlay_screens:
         config.overlay_screens.append("vita_sidebar")
+
+    # Menu screens stay inside the game rectangle, so clipping the screens
+    # layer there only adds a render pass. Gameplay keeps clipping, because
+    # BGI scripts may move screen content past the rectangle.
+    def vita_menu_clipping():
+        properties = renpy.display.interface.layer_properties.get("screens")
+        if properties is not None:
+            properties["clipping"] = not renpy.context()._menu
+
+    config.start_interact_callbacks.append(vita_menu_clipping)
 
     # Handle Vita gameplay shortcuts in quick_menu using the raw SDL controller
     # events. This also lets L + Select differ from either button on its own.
@@ -242,12 +277,79 @@ init 900 python:
     # their own event before it can reach SayBehavior.
     config.keymap["dismiss_unfocused"] = list(config.keymap["dismiss"])
 
+    # Cross, circle or START skip the rest of the maker logos and warnings
+    # (makerlogo.rpy). The splash is a chain of BGI pauses and dissolves, so a
+    # plain dismiss only ends the current step. Ren'Py's fast skip turns every
+    # remaining pause and transition into a no-op instead. The splash runs
+    # inside 00start.rpy's "call _splashscreen from _call_splashscreen_1", and
+    # that return site stays on the return stack exactly while it plays.
+    # The press must not map to dismiss: SayBehavior treats a dismiss while
+    # skipping as "stop skipping". Unmapped, the event still reaches the
+    # current SayBehavior, which ends the running pause or dissolve after
+    # config.skip_delay because skipping is now "fast".
+    VITA_SPLASH_SKIP_EVENTS = ("pad_a_press", "pad_b_press", "pad_start_press")
+
+    def vita_splash_active():
+        return "_call_splashscreen_1" in renpy.get_return_stack()
+
+    # Ren'Py's image prediction never reached the main menu on the Vita. Its
+    # first frame decoded the background on the main thread while the audio
+    # thread indexed the deferred audio archives for the menu music
+    # (tools/patch_vita_runtime.py). Both hold the interpreter lock most of the
+    # time, so each slowed the other: a 747 ms decode inside a 1.26 s frame,
+    # then a 2.8 s lookup before the music started. A daemon thread does both
+    # jobs ahead of time, during the first splash pause of at least
+    # VITA_WARMUP_PAUSE_MS (the warning screen), so they compete with neither
+    # a dissolve nor the menu. preload_texture() is the call Ren'Py's own
+    # preload thread makes; the GL upload still happens on the main thread.
+    VITA_WARMUP_PAUSE_MS = 5000
+
+    # A plain list, bound at init and never rebound, so neither rollback nor
+    # saves record it.
+    vita_warmup_started = python_list()
+
+    def vita_warm_main_menu():
+        renpy.display.im.cache.preload_texture(renpy.display.im.Image(VITA_MAIN_MENU_ART))
+
+        # Only the Vita runtime defers the audio archives. If the menu music
+        # starts first, its lookup mounts them and this call returns at once.
+        if getattr(renpy.loader, "lazy_archives_pending", None):
+            renpy.loader.mount_lazy_archives()
+
+    # bgi_f_110 starts by popping the pause length, in milliseconds, from the
+    # top of bgi_stack. Fast skip turns the pause into a no-op, so a skipped
+    # splash leaves both jobs to the main menu, as before.
+    def vita_maybe_start_warmup(name):
+        if (name != "bgi_f_110" or vita_warmup_started or config.skipping
+                or not vita_splash_active() or not bgi_stack
+                or bgi_stack[-1] < VITA_WARMUP_PAUSE_MS):
+            return
+
+        vita_warmup_started.append(True)
+        thread = threading.Thread(target=vita_warm_main_menu, name="vita_warmup")
+        thread.daemon = True
+        thread.start()
+
+    # _invoke_main_menu is the first label reached after the splash returns.
+    # Fast skip has no meaning in the main menu, so it must not outlive it.
+    def vita_label_callback(name, abnormal):
+        vita_maybe_start_warmup(name)
+
+        if name == "_invoke_main_menu" and config.skipping == "fast":
+            config.skipping = None
+
+    config.label_callback = vita_label_callback
+
     # Directional controller events may only move focus while a menu or a
     # choice screen is active. This matters after suspend/resume, when SDL can
     # deliver a stale stick/D-pad repeat that would otherwise focus one of the
     # touch-only sidebar buttons. D-pad Down advances dialogue, but its repeats
     # do not, so one press always advances exactly one interaction.
     def vita_map_pad_event(event_name):
+        if event_name in VITA_SPLASH_SKIP_EVENTS and vita_splash_active():
+            config.skipping = "fast"
+            return ()
+
         mapped = tuple(config.pad_bindings.get(event_name, ()))
         navigation_active = (
             renpy.context()._menu or
@@ -272,31 +374,88 @@ init 900 python:
 
     config.map_pad_event = vita_map_pad_event
 
-    style.pref_label_text.size = 38
-    style.radio_button_text.size = 34
-    style.check_button_text.size = 34
-    style.slider_button_text.size = 34
-    style.mute_all_button_text.size = 34
-    for button_style_name in ("radio_button", "check_button", "mute_all_button"):
-        button_style = getattr(style, button_style_name)
-        # The stock radio/check glyph rasters are transparent when idle and
-        # blue when selected, which vanishes against the active fill. The
-        # button fill and high-contrast text now carry the state instead.
-        button_style.foreground = None
-        button_style.hover_background = Solid(VITA_FOCUS_FILL + "80")
-        button_style.selected_idle_background = Solid(VITA_SELECTED_FILL + "80")
-        button_style.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "90")
-    for text_style_name in ("radio_button_text", "check_button_text", "mute_all_button_text"):
-        text_style = getattr(style, text_style_name)
-        text_style.color = VITA_INK
-        text_style.hover_color = VITA_INK_FOCUS
-        text_style.hover_bold = True
-        text_style.hover_underline = True
-        text_style.selected_idle_color = VITA_SELECTED_TEXT
-        text_style.selected_idle_bold = True
-        text_style.selected_hover_color = VITA_SELECTED_HOVER_TEXT
-        text_style.selected_hover_bold = True
-        text_style.selected_hover_underline = True
+    # Stock Ren'Py only applies default_focus on the first interaction of a
+    # screen, and drops focus whenever a menu switches screens because no
+    # widget keeps its focus name. With the D-pad that left nothing focused,
+    # so the first press jumped to whichever widget happened to be listed
+    # first. While a menu is driven by the D-pad, re-apply default_focus after
+    # every restart: the cursor stays on the entry of the open screen.
+    vita_focus_before_interact = renpy.display.focus.before_interact
+
+    def vita_before_interact(roots):
+        interface = renpy.display.interface
+        keyboard = (
+            renpy.display.focus.pending_focus_type == "keyboard" and
+            renpy.context()._menu
+        )
+        start_interact = interface.start_interact
+        if keyboard:
+            interface.start_interact = True
+        try:
+            return vita_focus_before_interact(roots)
+        finally:
+            interface.start_interact = start_interact
+
+    renpy.display.focus.before_interact = vita_before_interact
+
+    # With nothing focused (for example after touch input), the first D-pad
+    # press lands on the screen's default_focus widget instead of the first
+    # widget in display order.
+    vita_focus_nearest = renpy.display.focus.focus_nearest
+
+    def vita_focus_nearest_default(*args):
+        focus = renpy.display.focus
+        if focus.get_focused() is None:
+            defaults = [
+                f for f in focus.focus_list
+                if f.widget.default and f.widget.style.keyboard_focus
+            ]
+            if defaults:
+                focus.pending_focus_type = "keyboard"
+                return focus.change_focus(
+                    max(defaults, key=lambda f: f.widget.default)
+                )
+        return vita_focus_nearest(*args)
+
+    renpy.display.focus.focus_nearest = vita_focus_nearest_default
+
+    # Stock bars must be grabbed with cross before the D-pad changes them,
+    # and nothing on screen says so. A focused bar now moves one step per
+    # press along its axis (left/right on sliders, up/down on scrollbars);
+    # the grab path still works for touch.
+    vita_bar_event = renpy.display.behavior.Bar.event
+
+    def vita_bar_event_direct(self, ev, x, y, st):
+        if (
+            self.focusable and not self.hidden and self.is_focused() and
+            renpy.display.focus.get_grab() is not self
+        ):
+            map_event = renpy.display.behavior.map_event
+            vertical = self.style.bar_vertical
+            if map_event(ev, "bar_up" if vertical else "bar_left"):
+                step = -self.adjustment.step
+            elif map_event(ev, "bar_down" if vertical else "bar_right"):
+                step = self.adjustment.step
+            else:
+                step = 0
+
+            if step:
+                adjustment = self.adjustment
+                if self.style.bar_invert ^ vertical:
+                    step = -step
+                value = min(max(adjustment.value + step, 0), adjustment.range)
+                if isinstance(adjustment.range, int):
+                    value = int(value)
+                value = adjustment.round_value(value, release=True)
+                if value != adjustment.value:
+                    rv = adjustment.change(value)
+                    if rv is not None:
+                        return rv
+                raise renpy.display.core.IgnoreEvent()
+
+        return vita_bar_event(self, ev, x, y, st)
+
+    renpy.display.behavior.Bar.event = vita_bar_event_direct
 
     # Speaker names previously rendered straight over game art because
     # gui/namebox.png ships fully transparent. Put them on the shared light
@@ -332,30 +491,6 @@ init 900 python:
     style.notify_text.size = 34
     style.skip_text.size = 34
 
-    # Confirmation prompts are modal on Vita and must remain readable after the
-    # 1694x960 canvas is scaled to the physical display.
-    style.vita_confirm_frame.xsize = 900
-    style.vita_confirm_frame.ysize = 420
-    style.vita_confirm_prompt_text.size = 44
-    style.vita_confirm_prompt_text.xsize = 780
-    style.vita_confirm_button.xsize = 260
-    style.vita_confirm_button.ysize = 100
-    style.vita_confirm_button.background = Solid("#e5e8edff")
-    style.vita_confirm_button.hover_background = Solid(VITA_FOCUS_FILL + "ff")
-    style.vita_confirm_button.selected_idle_background = Solid(VITA_SELECTED_FILL + "ff")
-    style.vita_confirm_button.selected_hover_background = Solid(VITA_SELECTED_FILL_HOVER + "ff")
-    style.vita_confirm_button_text.size = 40
-    style.vita_confirm_button_text.color = "#4f5664"
-    style.vita_confirm_button_text.hover_color = VITA_INK_FOCUS
-    style.vita_confirm_button_text.selected_idle_color = VITA_SELECTED_TEXT
-    style.vita_confirm_button_text.selected_hover_color = VITA_SELECTED_HOVER_TEXT
-    style.vita_confirm_button_text.outlines = []
-
-    # Keep enough decoded images for nearby scene changes without allowing the
-    # desktop default to consume most of the Vita process memory.
-    config.image_cache_size = None
-    config.image_cache_size_mb = 96
-
     # The overlay uses the 1694x960 virtual canvas. These values become roughly
     # 108x59 physical pixels and fit inside each 207-unit virtual pillarbox.
     vita_sidebar_inset = 9
@@ -381,6 +516,136 @@ init 900 python:
     style.vita_side_button_text.xalign = 0.5
     style.vita_side_button_text.yalign = 0.5
 
+    # gui.init() enables config.defer_styles, so every style statement (the
+    # stock ones in screens.rpy included) runs after all init code and beats
+    # any style.X.prop assignment made in init python: a later properties
+    # block wins, prefixed or not. The menu styles are therefore added from a
+    # change_language callback, which runs after the deferred statements at
+    # startup and again after every style restore (gui.rebuild included).
+    # They are not style statements because each new statement shifts the
+    # global node serials that existing saves depend on (docs/BUILDING.md).
+    #
+    # One focus language: the focused widget gets a light fill inside a 4 px
+    # dark blue frame; the selected entry keeps the stock #0099ff marker. The
+    # two combine, so the D-pad cursor is never confused with the selection.
+    def vita_menu_styles():
+        def restyle(name, parent=None, **properties):
+            target = renpy.style.get_or_create_style(name)
+            if parent is not None:
+                target.set_parent(parent)
+            target.add_properties(properties)
+
+        restyle(
+            "vita_navigation_panel", "empty",
+            xsize=286, xpadding=10, ypadding=14,
+            background=Solid("#f7f9fbb8"),
+        )
+        restyle(
+            "navigation_button",
+            xsize=260, ysize=58, xpadding=18, ypadding=5,
+            background=None, hover_background=vita_focus_frame(),
+            foreground=None, selected_foreground=vita_selected_marker(),
+        )
+        restyle(
+            "navigation_button_text",
+            font=gui.interface_text_font, size=38, outlines=[],
+            color=VITA_INK, hover_color=VITA_INK_FOCUS,
+            selected_color=VITA_INK_FOCUS, selected_bold=True,
+            insensitive_color="#64707f",
+        )
+        restyle(
+            "main_menu_frame",
+            background=vita_layers(
+                Solid("#ffffffe5", xsize=277),
+                Solid(VITA_ACCENT, xpos=277, xsize=3),
+            ),
+        )
+        restyle(
+            "game_menu_outer_frame",
+            xfill=True, yfill=True,
+            background=vita_layers(
+                Solid("#ffffffe5"),
+                Solid(VITA_ACCENT, xpos=277, ypos=120, xsize=3, ysize=570),
+            ),
+        )
+        # Draggable viewports take focus, and their rect covers the whole
+        # content area: focus parked there showed nothing and the D-pad could
+        # only leave to the left. Touch dragging does not need keyboard focus.
+        restyle("game_menu_viewport", keyboard_focus=False)
+        restyle("game_menu_vpgrid", keyboard_focus=False)
+
+        restyle("page_label_text", size=38)
+        restyle(
+            "page_button",
+            xpadding=10, ypadding=6,
+            background=None, hover_background=vita_focus_frame(),
+            foreground=None, selected_foreground=vita_page_marker(),
+        )
+        restyle(
+            "page_button_text",
+            size=36, color=VITA_INK, hover_color=VITA_INK_FOCUS,
+            selected_color=VITA_INK_FOCUS, selected_bold=True,
+        )
+        restyle(
+            "slot_button",
+            hover_background=vita_focus_frame(
+                inner=Frame(
+                    "gui/button/slot_hover_background.png",
+                    gui.slot_button_borders,
+                )
+            ),
+        )
+        restyle(
+            "slot_button_text",
+            size=34, color=VITA_INK, hover_color=VITA_INK_FOCUS,
+            selected_color=VITA_INK_FOCUS,
+        )
+        restyle("slot_time_text", size=32)
+        restyle("slot_name_text", size=34)
+
+        restyle("pref_label_text", size=38)
+        for kind in ("radio", "check"):
+            restyle(
+                kind + "_button",
+                left_padding=18, right_padding=14, ypadding=6,
+                background=None, hover_background=vita_focus_frame(),
+                foreground=None, selected_foreground=vita_selected_marker(),
+            )
+            restyle(
+                kind + "_button_text",
+                size=34, color=VITA_INK, hover_color=VITA_INK_FOCUS,
+                selected_color=VITA_INK_FOCUS, selected_bold=True,
+            )
+        restyle("slider_button_text", size=34)
+        # Same geometry as the stock slider rasters (#66c1ff bar, #99d6ff when
+        # focused, 13 px #0099ff thumb), drawn as solids and taller.
+        restyle(
+            "slider",
+            ysize=32,
+            base_bar=Solid("#66c1ff"),
+            hover_base_bar=vita_focus_frame("#99d6ff"),
+            thumb=Solid(VITA_ACCENT, xsize=13),
+            hover_thumb=Solid(VITA_INK_FOCUS, xsize=13),
+        )
+
+        restyle("vita_confirm_frame", xsize=900, ysize=420)
+        restyle("vita_confirm_prompt_text", size=44, xsize=780)
+        # The confirm screen moves `selected` with the D-pad and keeps focus
+        # parked on No, so only the selected button shows the focus frame.
+        restyle(
+            "vita_confirm_button",
+            xsize=260, ysize=100,
+            background=Solid("#e5e8ed"),
+            selected_background=vita_focus_frame(),
+        )
+        restyle(
+            "vita_confirm_button_text",
+            size=40, outlines=[], color="#4f5664",
+            selected_color=VITA_INK_FOCUS, selected_bold=True,
+        )
+
+    config.change_language_callbacks.append(vita_menu_styles)
+
 
 style vita_side_button is quick_button
 style vita_side_button_text is quick_button_text
@@ -399,6 +664,17 @@ default persistent.vita_side_buttons = True
 # Extra entry whose gallery dependencies are not present in the Vita payload.
 # Replace it completely so no hidden action from the compiled screen remains.
 screen navigation():
+    # The entry of the open menu carries default_focus, so the D-pad cursor
+    # starts there. Switching menus only restarts the interaction, where stock
+    # Ren'Py skips default_focus; vita_before_interact re-applies it.
+    $ vita_current_menu = next(
+        (
+            name for name in ("history", "save", "load", "preferences", "about")
+            if renpy.get_screen(name) is not None
+        ),
+        None,
+    )
+
     frame:
         style "vita_navigation_panel"
         xpos gui.navigation_xpos
@@ -410,20 +686,37 @@ screen navigation():
             spacing 10
 
             if main_menu:
-                textbutton "Start" action Start()
+                textbutton "Start":
+                    action Start()
+                    default_focus vita_current_menu is None
             else:
-                textbutton "History" action ShowMenu("history") selected renpy.get_screen("history") is not None
-                textbutton "Save" action ShowMenu("save") selected renpy.get_screen("save") is not None
+                textbutton "History":
+                    action ShowMenu("history")
+                    selected vita_current_menu == "history"
+                    default_focus vita_current_menu == "history"
+                textbutton "Save":
+                    action ShowMenu("save")
+                    selected vita_current_menu == "save"
+                    default_focus vita_current_menu == "save"
 
-            textbutton "Load" action ShowMenu("load") selected renpy.get_screen("load") is not None
-            textbutton "Preferences" action ShowMenu("preferences") selected renpy.get_screen("preferences") is not None
+            textbutton "Load":
+                action ShowMenu("load")
+                selected vita_current_menu == "load"
+                default_focus vita_current_menu == "load"
+            textbutton "Preferences":
+                action ShowMenu("preferences")
+                selected vita_current_menu == "preferences"
+                default_focus vita_current_menu == "preferences"
 
             if _in_replay:
                 textbutton "End Replay" action EndReplay(confirm=True)
             elif not main_menu:
                 textbutton "Main Menu" action MainMenu()
 
-            textbutton "About" action ShowMenu("about") selected renpy.get_screen("about") is not None
+            textbutton "About":
+                action ShowMenu("about")
+                selected vita_current_menu == "about"
+                default_focus vita_current_menu == "about"
 
 
 # Do not expose the source game's untranslated gui.about value. The port only
@@ -451,7 +744,7 @@ screen confirm(message, yes_action, no_action):
 
     default vita_confirm_yes = False
 
-    add "gui/overlay/confirm.png"
+    add Solid("#ffffff99")
 
     frame:
         xalign 0.5

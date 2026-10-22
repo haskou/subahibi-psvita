@@ -613,7 +613,8 @@ label bgi_f_241:
     $ p1 = bgi_stack.pop()
 
     $ bgi_img = p5.lower()
-    $ bgi_imdis = p4.lower() + '.webp'
+    # Was the unused bgi_imdis store; kept as one statement for save names.
+    pass
     $ renpy.show(bgi_img,tag='30',zorder=0)
 
     $ renpy.with_statement(Dissolve(p2/1000.0))
@@ -704,7 +705,8 @@ label bgi_f_281:
     $ bgi_clean_cache()
 
     $ bgi_img = p5.lower()
-    $ bgi_imdis = p4.lower() + '.webp'
+    # Was the unused bgi_imdis store; kept as one statement for save names.
+    pass
     $ renpy.show(bgi_img,tag='30',zorder=0)
     $ renpy.with_statement(Dissolve(p1/1000.0))
     return
@@ -729,7 +731,8 @@ label bgi_f_289:
     $ p2 = bgi_stack.pop()
     $ p1 = bgi_stack.pop()
 
-    $ bgi_imdis = p4.lower() + '.webp'
+    # Was the unused bgi_imdis store; kept as one statement for save names.
+    pass
     $ renpy.scene()
     $ renpy.scene(layer='f30x')
     $ renpy.show('black',tag='30')
@@ -904,7 +907,7 @@ label bgi_f_2c6:
     $ bgi_tag = str(p4)
     $ bgi_trans_time = p2/1000.0
 
-    if bgi_char_pos[p4]["name"][:2] != bgi_img[:2]:
+    if bgi_char_pos[p4] == 0 or bgi_char_pos[p4]["name"][:2] != bgi_img[:2]:
         return
 
     $ bgi_char_pos[p4]["name"] = bgi_img
@@ -1022,7 +1025,7 @@ label bgi_f_300:
     if bgi_img == 'white' or bgi_img == 'black' or bgi_img == 'red':
         $ bgi_image_size = [1280,960]
     else:
-        $ bgi_image_size = renpy.image_size(bgi_img + '.webp')
+        $ bgi_image_size = vita_image_size(bgi_img)
 
     $ bgi_x = p13
     $ bgi_y = p12
@@ -1158,7 +1161,7 @@ label bgi_f_30c:
 
     $ bgi_tag = str(p2)
     $ bgi_img = bgi_f30x_pos[p2]["name"]
-    $ bgi_trans_time = renpy.image_size(bgi_img + '.webp')[0]/abs(p1)
+    $ bgi_trans_time = vita_image_size(bgi_img)[0]/abs(p1)
     $ print(bgi_trans_time)
 
     if p1 > 0:

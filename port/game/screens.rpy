@@ -386,7 +386,7 @@ style main_menu_vbox:
     xoffset -20
     xmaximum 800
     yalign 1.0
-    yoffset -20
+    yoffset -50
 
 style main_menu_text:
     properties gui.text_properties("main_menu", accent=True)
@@ -598,6 +598,10 @@ screen file_slots(title, load_mode=False):
     $ used_slots = FileUsedSlots(highest_first=False) if load_mode else []
     $ first_used_slot = used_slots[0] if used_slots else None
 
+    # Vita: L and R turn save pages without leaving the slot grid.
+    key "pad_leftshoulder_press" action FilePagePrevious()
+    key "pad_rightshoulder_press" action FilePageNext()
+
     use game_menu(title):
 
         fixed:
@@ -610,6 +614,9 @@ screen file_slots(title, load_mode=False):
                 style "page_label"
 
                 key_events True
+                # Vita: renaming pages needs a keyboard; keep the D-pad cursor
+                # on the slots and page buttons.
+                keyboard_focus False
                 xalign 0.5
                 action page_name_value.Toggle()
 
@@ -632,7 +639,8 @@ screen file_slots(title, load_mode=False):
 
                     button:
                         action (FileLoad(slot) if load_mode else FileSave(slot))
-                        default_focus (load_mode and slot == first_used_slot)
+                        # Vita: above the navigation entry's default_focus.
+                        default_focus (2 if (load_mode and slot == first_used_slot) else 0)
 
                         has vbox
 

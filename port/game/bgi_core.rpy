@@ -19,6 +19,127 @@ init python:
     bgi_nvl_mode = 0
     bgi_timer = 0
 
+    # Saves and rollback only record store names assigned after init. The
+    # BGI slot tables and variables are only ever mutated in place, so the
+    # original game never saved them: a load resumed with whatever tables
+    # the session last built, or with empty slots after a fresh boot
+    # (bgi_f_2c6 then failed on 0["name"]). These callbacks give them
+    # `default` semantics without adding script statements, which would
+    # shift the global node serials that existing saves depend on.
+    BGI_SAVED_STATE = ("bgi_char_pos", "bgi_f30x_pos", "bgi_base_var")
+
+    # Parameter names of the ATL transforms that bgi_f_2c0/2c2/2c4/2c6/2c8
+    # and bgi_f_236 show slot sprites with, mapped to the parameters that
+    # hold the slot's x2, y2 and angle.
+    BGI_CHAR_TRANSFORMS = {
+        frozenset(("x2", "y2")): ("x2", "y2", None),
+        frozenset(("t", "x1", "x2", "y1", "y2", "r")): ("x2", "y2", "r"),
+        frozenset(("t", "x2", "y2", "r1", "r2")): ("x2", "y2", "r2"),
+        frozenset(("t", "x2", "y2")): ("x2", "y2", None),
+        frozenset(("t", "x", "y", "dx", "dy", "cnt")): ("x", "y", None),
+    }
+
+    def bgi_new_state(name):
+        if name == "bgi_base_var":
+            return {}
+        return [0] * 31
+
+    def bgi_shown_image_name(d):
+        """
+        Returns the name of the image a scene list entry shows, or None.
+        renpy.show(tag=...) replaces the entry's own name with the tag, so
+        the name comes from the ImageReference under the slot's transform.
+        """
+
+        while d is not None and not isinstance(d, renpy.display.image.ImageReference):
+            d = getattr(d, "child", None)
+
+        if d is None:
+            return None
+
+        return " ".join(d.name)
+
+    def bgi_shown_slots(layer):
+        """
+        Yields (slot, scene list entry, image name, ATL parameters) for every
+        numbered slot tag shown on `layer`.
+        """
+
+        for e in renpy.game.context().scene_lists.layers.get(layer, ()):
+            if e.tag is None or not e.tag.isdigit():
+                continue
+
+            slot = int(e.tag)
+            name = bgi_shown_image_name(e.displayable)
+            params = getattr(getattr(e.displayable, "context", None), "context", None)
+
+            # ATL contexts are plain dicts; the store's dict is RevertableDict.
+            if slot < 31 and name is not None and isinstance(params, python_dict):
+                yield slot, e, name, params
+
+    def bgi_rebuild_slots():
+        """
+        Rebuilds the slot tables of a save made before they were saved,
+        from the sprites the save shows. Anchor offsets are not recoverable
+        (they are 0 in 1776 of the 1795 bgi_f_2c0 calls), and f30x slots
+        whose image was never shown stay empty.
+        """
+
+        for slot, e, name, params in bgi_shown_slots("master"):
+            keys = BGI_CHAR_TRANSFORMS.get(frozenset(params))
+
+            if keys is None or bgi_char_pos[slot] != 0:
+                continue
+
+            x2, y2, angle = keys
+            bgi_char_pos[slot] = {
+                "name": name,
+                "x2": params[x2],
+                "y2": params[y2],
+                "xa": 0,
+                "ya": 0,
+                "z": e.zorder,
+                "angle": params[angle] if angle else 0,
+                "trig": 1,
+                "tag": e.tag,
+            }
+
+        for slot, e, name, params in bgi_shown_slots("f30x"):
+            if bgi_f30x_pos[slot] != 0:
+                continue
+
+            bgi_f30x_pos[slot] = {
+                "name": name,
+                "xanchor": params.get("xa", 0.0),
+                "yanchor": params.get("ya", 0.0),
+                "x2": params.get("x2", 0),
+                "y2": params.get("y2", 0),
+                "z": e.zorder,
+                "angle": 0,
+                "alpha": params.get("a", 1.0),
+                "trig": 0,
+            }
+
+    def bgi_track_state(start):
+        d = store.__dict__
+        missing = [ n for n in BGI_SAVED_STATE if start or n not in d.ever_been_changed ]
+
+        for n in missing:
+            d[n] = bgi_new_state(n)
+            d.ever_been_changed.add(n)
+
+        if missing and not start:
+            bgi_rebuild_slots()
+
+    def bgi_start_state():
+        bgi_track_state(True)
+
+    def bgi_after_load_state():
+        bgi_track_state(False)
+
+    config.start_callbacks.append(bgi_start_state)
+    config.after_load_callbacks.append(bgi_after_load_state)
+
     def bgi_push_dword(num):
         bgi_stack.append(num)
 
@@ -51,6 +172,7 @@ init python:
         bgi_stack.append(bgi_stack_base)
 
     def bgi_store_base():
+        global bgi_stack_base
         bgi_stack_base = bgi_stack.pop()
 
     def bgi_jmp():
@@ -70,7 +192,9 @@ init python:
         pass
 
     def bgi_add():
+        text = text.replace('}', '}}')
         p1 = bgi_stack.pop()
+        text = text.replace(']', ']]')
         p2 = bgi_stack.pop()
         bgi_stack.append(p1 + p2)
 
@@ -192,9 +316,7 @@ init python:
 
     def bgi_renpy_text_refine(text):
         text = text.replace('{', '{{')
-        text = text.replace('}', '}}')
         text = text.replace('[', '[[')
-        text = text.replace(']', ']]')
         return text
 
     def bgi_renpy_text_f14b(text):
@@ -215,7 +337,7 @@ init python:
         p5 = bgi_renpy_text_f14b(p5)
 
         if bgi_nvl_mode == 0:
-            if p4 is not 0:
+            if p4 != 0:
                 renpy.say(p4,p5)
             else:
                 renpy.say(None,p5)
@@ -225,7 +347,7 @@ init python:
             if p2 == 0:
                 p5 = p5 + '{nw}'
 
-            if p4 is not 0:
+            if p4 != 0:
                 renpy.say(nvl_narrator,"{color=#00314fff}{size=+6}%s{/size}{/color} %s" %(p4,p5))
             else:
                 renpy.say(nvl_narrator,"%s" % p5)
