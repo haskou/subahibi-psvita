@@ -56,7 +56,7 @@ The VPK intentionally contains the runtime, scripts, UI and caches but not the
 archive operations, and the former 2.32 GB monolithic VPK failed immediately
 with `0xFFFFFFFF`. Media is therefore written as three RPA-3.0 archives, each
 smaller than 1 GiB, and stored persistently in `ux0:data/Subahibi/` beside the
-approximately 50 MB VPK installation payload.
+approximately 44 MB VPK installation payload.
 
 ## Pipeline
 
